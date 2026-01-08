@@ -1,12 +1,16 @@
 import tkinter as tk
 from tkinter import ttk
 import copy
+import serial
 import serial.tools.list_ports
 
 class SerialConfigFrame(ttk.LabelFrame):
-    def __init__(self, master, title, on_change_callback):
+    def __init__(self, master, title, on_change_callback, port_manager, log_callback):
         super().__init__(master, text=title, padding=10)
         self.on_change = on_change_callback
+        self.port_manager = port_manager
+        self.log = log_callback
+        self.serial_conn = None
         self.create_widgets()
 
     def create_widgets(self):
@@ -69,10 +73,65 @@ class SerialConfigFrame(ttk.LabelFrame):
             # If nothing selected, select first? No, leave empty.
 
     def toggle_port(self):
-        # Mock open logic
-        self.is_open = not self.is_open
-        self.btn_open.config(text="Close Port" if self.is_open else "Open Port")
-        print(f"{self['text']} {'Opened' if self.is_open else 'Closed'} Settings: {self.get_settings()}")
+        if self.is_open:
+            # Close Logic
+            if self.serial_conn and self.serial_conn.is_open:
+                try:
+                    self.serial_conn.close()
+                except Exception as e:
+                    self.log(f"Error closing port: {e}", "ERR")
+            self.serial_conn = None
+            self.port_manager.release_port(self.port_var.get())
+            self.is_open = False
+            self.btn_open.config(text="Open Port")
+            self.log(f"{self['text']} Port Closed", "SER")
+            self.toggle_inputs(True)
+        else:
+            # Open Logic
+            port = self.port_var.get()
+            if not port:
+                self.log("Error: No port selected", "ERR")
+                return
+            
+            if not self.port_manager.is_port_available(port):
+                self.log(f"Error: Port {port} is already in use", "ERR")
+                return
+
+            try:
+                # Map Parity
+                parity_map = {
+                    'None': serial.PARITY_NONE,
+                    'Even': serial.PARITY_EVEN,
+                    'Odd': serial.PARITY_ODD,
+                    'Mark': serial.PARITY_MARK,
+                    'Space': serial.PARITY_SPACE
+                }
+                
+                self.serial_conn = serial.Serial(
+                    port=port,
+                    baudrate=self.baud_var.get(),
+                    bytesize=self.data_bits_var.get(),
+                    stopbits=self.stop_bits_var.get(),
+                    parity=parity_map.get(self.parity_var.get(), serial.PARITY_NONE),
+                    timeout=0.1
+                )
+                
+                self.port_manager.claim_port(port)
+                self.is_open = True
+                self.btn_open.config(text="Close Port")
+                self.log(f"{self['text']} Port {port} Opened successfully", "SER")
+                self.toggle_inputs(False)
+            except Exception as e:
+                self.log(f"Error opening port {port}: {e}", "ERR")
+                self.serial_conn = None
+
+    def toggle_inputs(self, enable):
+        state = "readonly" if enable else "disabled"
+        self.port_combo.config(state=state)
+        self.baud_combo.config(state=state)
+        self.data_bits_combo.config(state=state)
+        self.stop_bits_combo.config(state=state)
+        self.parity_combo.config(state=state)
 
     def get_settings(self):
         return {
@@ -83,12 +142,30 @@ class SerialConfigFrame(ttk.LabelFrame):
             'parity': self.parity_var.get()
         }
 
+    def get_serial_connection(self):
+        return self.serial_conn
+
+class PortManager:
+    def __init__(self):
+        self.used_ports = set()
+
+    def is_port_available(self, port):
+        return port not in self.used_ports
+
+    def claim_port(self, port):
+        self.used_ports.add(port)
+
+    def release_port(self, port):
+        if port in self.used_ports:
+            self.used_ports.remove(port)
+
 class SettingsFrame(ttk.Frame):
-    def __init__(self, master=None):
+    def __init__(self, master=None, log_callback=None):
         super().__init__(master)
+        self.log = log_callback if log_callback else print
         self.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Store variables to track changes
+        self.port_manager = PortManager()
         self.vars = {}
         
         self.create_widgets()
@@ -117,9 +194,6 @@ class SettingsFrame(ttk.Frame):
         self.unit_combo.grid(row=1, column=2, padx=5, pady=5, sticky=tk.W)
         self.unit_combo.bind("<<ComboboxSelected>>", lambda e: self.check_changes())
         
-        # Initial visibility check
-        # self.on_mode_change() # Moved to the end of create_widgets
-
         # Press Settings
         press_frame = ttk.LabelFrame(self, text="Press Settings", padding=10)
         press_frame.pack(fill=tk.X, pady=5)
@@ -140,7 +214,7 @@ class SettingsFrame(ttk.Frame):
 
         self.serial_frames = {}
         for idx, title in enumerate(["X-Axis Motor", "Y-Axis Motor", "Relay (Solenoid)"]):
-            frame = SerialConfigFrame(serial_container, title, self.check_changes)
+            frame = SerialConfigFrame(serial_container, title, self.check_changes, self.port_manager, self.log)
             frame.grid(row=0, column=idx, padx=5, sticky=tk.NSEW)
             serial_container.columnconfigure(idx, weight=1)
             self.serial_frames[title] = frame
@@ -182,4 +256,9 @@ class SettingsFrame(ttk.Frame):
     def apply_changes(self):
         self.save_initial_state()
         self.check_changes()
-        print("Settings Applied:", self.saved_state)
+        self.log(f"Settings Applied: {self.saved_state}", "SET")
+
+    def get_serial_connection(self, title):
+        if title in self.serial_frames:
+            return self.serial_frames[title].get_serial_connection()
+        return None

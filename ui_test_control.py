@@ -1,14 +1,23 @@
 import tkinter as tk
 from tkinter import ttk
 import datetime
+import time
+import threading
 
 class TestControlFrame(ttk.Frame):
-    def __init__(self, master=None, settings_source=None):
+    def __init__(self, master=None, settings_source=None, log_callback=None):
         super().__init__(master)
         self.settings_source = settings_source
+        self.log = log_callback if log_callback else print
         self.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         self.timer_id = None
         self.remaining_seconds = 0
+        self.remaining_counts = 0
+        self.is_running = False
+        self.is_paused = False
+        self.stop_requested = False
+        self.pause_requested = False
+        self.current_test_thread = None
         self.create_widgets()
 
     def create_widgets(self):
@@ -37,64 +46,168 @@ class TestControlFrame(ttk.Frame):
     def start_test(self):
         if self.btn_start['text'] == "Resume":
             # Resume logic
-            self.run_timer()
+            self.resume_test()
         else:
             # New Start Logic
-            if self.settings_source:
-                settings = self.settings_source.get_current_state()
-                mode = settings.get('test_mode')
-                target = settings.get('target_value', 0)
-                
-                if mode == 'time':
-                    unit = settings.get('time_unit', 'Seconds')
-                    if unit == 'Minutes':
-                        self.remaining_seconds = target * 60
-                    elif unit == 'Hours':
-                        self.remaining_seconds = target * 3600
-                    else:
-                        self.remaining_seconds = target
-                    
-                    self.run_timer()
-                else:
-                    self.lbl_remaining.config(text=f"Remaining: {target} (Counts)")
+            if not self.settings_source:
+                self.log("Error: Settings source not available", "ERR")
+                return
+
+            settings = self.settings_source.get_current_state()
+            mode = settings.get('test_mode')
+            target = settings.get('target_value', 0)
             
-        self.lbl_status.config(text="Current State: TESTING", foreground="green")
-        self.btn_start.config(state=tk.DISABLED)
-        self.btn_pause.config(state=tk.NORMAL)
-        self.btn_stop.config(state=tk.NORMAL)
-        print("Test Started")
+            # Initialize remaining values
+            if mode == 'time':
+                unit = settings.get('time_unit', 'Seconds')
+                if unit == 'Minutes':
+                    self.remaining_seconds = target * 60
+                elif unit == 'Hours':
+                    self.remaining_seconds = target * 3600
+                else:
+                    self.remaining_seconds = target
+                
+                # Initial display for time
+                m, s = divmod(self.remaining_seconds, 60)
+                h, m = divmod(m, 60)
+                self.lbl_remaining.config(text=f"Remaining: {h:02d}:{m:02d}:{s:02d}")
+            else:
+                self.remaining_counts = target
+                self.lbl_remaining.config(text=f"Remaining: {self.remaining_counts} (Counts)")
+            
+            # Reset Flags
+            self.is_running = True
+            self.is_paused = False
+            self.stop_requested = False
+            self.pause_requested = False
+            
+            # Start Thread
+            self.current_test_thread = threading.Thread(target=self.run_test_cycle, daemon=True)
+            self.current_test_thread.start()
+            
+            if mode == 'time':
+                self.run_timer()
+            
+        self.update_ui_state("TESTING")
+        self.log("Test Started", "TEST")
+
+    def update_ui_state(self, state):
+        if state == "TESTING":
+            self.lbl_status.config(text="Current State: TESTING", foreground="green")
+            self.btn_start.config(state=tk.DISABLED)
+            self.btn_pause.config(state=tk.NORMAL)
+            self.btn_stop.config(state=tk.NORMAL)
+        elif state == "PAUSED":
+            self.lbl_status.config(text="Current State: PAUSED", foreground="orange")
+            self.btn_start.config(state=tk.NORMAL, text="Resume")
+            self.btn_pause.config(state=tk.DISABLED)
+        elif state == "STANDBY":
+            self.lbl_status.config(text="Current State: STANDBY", foreground="gray")
+            self.btn_start.config(state=tk.NORMAL, text="Start Test")
+            self.btn_pause.config(state=tk.DISABLED)
+            self.btn_stop.config(state=tk.DISABLED)
+            self.lbl_remaining.config(text="Remaining: --")
 
     def run_timer(self):
+        if not self.is_running or self.is_paused:
+            return
+
         if self.remaining_seconds >= 0:
             m, s = divmod(self.remaining_seconds, 60)
             h, m = divmod(m, 60)
             self.lbl_remaining.config(text=f"Remaining: {h:02d}:{m:02d}:{s:02d}")
             
             if self.remaining_seconds == 0:
-                self.stop_test()
+                self.stop_requested = True # Signal thread to stop after cycle
                 return
 
             self.remaining_seconds -= 1
             self.timer_id = self.after(1000, self.run_timer)
 
-    def pause_test(self):
+    def run_test_cycle(self):
+        settings = self.settings_source.get_current_state()
+        relay_conn = self.settings_source.get_serial_connection("Relay (Solenoid)")
+        
+        press_duration = settings.get('press_duration', 100) / 1000.0
+        interval = settings.get('press_interval', 500) / 1000.0
+        mode = settings.get('test_mode')
+
+        # Hex Commands
+        CMD_OPEN = bytes.fromhex("A0 01 00 A2")
+        CMD_CLOSE = bytes.fromhex("A0 01 00 A1")
+
+        while self.is_running:
+            if self.stop_requested:
+                break
+            
+            if self.pause_requested:
+                self.is_paused = True
+                while self.pause_requested: # Wait until resumed
+                    time.sleep(0.1)
+                    if self.stop_requested:
+                        break
+                self.is_paused = False
+                if self.stop_requested:
+                    break
+
+            # --- Start Cycle ---
+            try:
+                if relay_conn and relay_conn.is_open:
+                    relay_conn.write(CMD_OPEN)
+                    self.log("Relay OPEN", "REL")
+            except Exception as e:
+                self.log(f"Error writing to Relay: {e}", "ERR")
+
+            time.sleep(press_duration)
+
+            try:
+                if relay_conn and relay_conn.is_open:
+                    relay_conn.write(CMD_CLOSE)
+                    self.log("Relay CLOSE", "REL")
+            except Exception as e:
+                self.log(f"Error writing to Relay: {e}", "ERR")
+            
+            time.sleep(interval)
+            # --- End Cycle ---
+
+            # Update Counts if applicable
+            if mode == 'count':
+                self.remaining_counts -= 1
+                # Update UI from thread safely? Tkinter is not thread safe, but config often works.
+                # Better to use after/event, but for simple label update:
+                self.lbl_remaining.after(0, lambda: self.lbl_remaining.config(text=f"Remaining: {self.remaining_counts} (Counts)"))
+                
+                if self.remaining_counts <= 0:
+                    break
+        
+        # Cleanup after loop finishes
+        self.is_running = False
+        self.lbl_remaining.after(0, self.finish_test)
+
+    def finish_test(self):
         if self.timer_id:
             self.after_cancel(self.timer_id)
             self.timer_id = None
-            
-        self.lbl_status.config(text="Current State: PAUSED", foreground="orange")
-        self.btn_start.config(state=tk.NORMAL, text="Resume")
-        self.btn_pause.config(state=tk.DISABLED)
-        print("Test Paused")
+        self.update_ui_state("STANDBY")
+        self.log("Test Finished/Stopped", "TEST")
+
+    def pause_test(self):
+        self.pause_requested = True
+        if self.timer_id:
+            self.after_cancel(self.timer_id)
+            self.timer_id = None
+        self.update_ui_state("PAUSED")
+        self.log("Test Pause Requested (waiting for cycle to finish)", "TEST")
+
+    def resume_test(self):
+        self.pause_requested = False # Unblock thread
+        settings = self.settings_source.get_current_state()
+        if settings.get('test_mode') == 'time':
+            self.run_timer()
+        self.update_ui_state("TESTING")
+        self.log("Test Resumed", "TEST")
 
     def stop_test(self):
-        if self.timer_id:
-            self.after_cancel(self.timer_id)
-            self.timer_id = None
-            
-        self.lbl_status.config(text="Current State: STANDBY", foreground="gray")
-        self.btn_start.config(state=tk.NORMAL, text="Start Test")
-        self.btn_pause.config(state=tk.DISABLED)
-        self.btn_stop.config(state=tk.DISABLED)
-        self.lbl_remaining.config(text="Remaining: --")
-        print("Test Stopped")
+        self.stop_requested = True
+        self.pause_requested = False # Unblock if paused so it can exit
+        self.log("Test Stop Requested (waiting for cycle to finish)", "TEST")

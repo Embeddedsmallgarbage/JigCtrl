@@ -2,8 +2,9 @@ import tkinter as tk
 from tkinter import ttk
 
 class MotionControlFrame(ttk.Frame):
-    def __init__(self, master=None):
+    def __init__(self, master=None, log_callback=None):
         super().__init__(master)
+        self.log = log_callback if log_callback else print
         self.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         self.create_widgets()
         self.bind_keys()
@@ -74,7 +75,7 @@ class MotionControlFrame(ttk.Frame):
             pass # Ignore if already unbound
 
     def on_btn_click(self, direction):
-        print(f"Button clicked: {direction}")
+        self.log(f"Button clicked: {direction}", "MOT")
         # Here logic to send serial command would be added
 
     def animate_press(self, direction, is_pressed):
@@ -84,5 +85,7 @@ class MotionControlFrame(ttk.Frame):
         
         if is_pressed:
             btn.state(['pressed'])
+            self.log(f"Key pressed: {direction}", "MOT")
         else:
             btn.state(['!pressed'])
+            self.log(f"Key released: {direction}", "MOT")

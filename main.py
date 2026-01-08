@@ -51,12 +51,13 @@ class JigCtrlApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Tabs
-        self.tab_motion = MotionControlFrame(self.notebook)
-        self.tab_settings = SettingsFrame(self.notebook)
-        # Pass settings tab to test control tab so it can read configurations
-        self.tab_test = TestControlFrame(self.notebook, settings_source=self.tab_settings)
+        # Tabs - Initialize LogFrame first so it can be passed to others
         self.tab_log = LogFrame(self.notebook)
+        
+        self.tab_motion = MotionControlFrame(self.notebook, log_callback=self.tab_log.add_log)
+        self.tab_settings = SettingsFrame(self.notebook, log_callback=self.tab_log.add_log)
+        # Pass settings tab to test control tab so it can read configurations
+        self.tab_test = TestControlFrame(self.notebook, settings_source=self.tab_settings, log_callback=self.tab_log.add_log)
 
         self.notebook.add(self.tab_motion, text="Motion Control (运动控制)")
         self.notebook.add(self.tab_settings, text="Parameter Settings (参数设置)")
