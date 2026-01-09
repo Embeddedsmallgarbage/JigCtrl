@@ -3,6 +3,7 @@ from tkinter import ttk
 import copy
 import serial
 import serial.tools.list_ports
+from config_manager import ConfigManager
 
 # =========================================================================
 # 辅助类：串口配置组件 (SerialConfigFrame)
@@ -216,11 +217,16 @@ class SettingsFrame(ttk.Frame):
         self.log = log_callback if log_callback else print
         self.port_manager = PortManager() # 初始化端口管理器
         self.vars = {} # 存储普通参数的变量字典
+        self.config_manager = ConfigManager() # 初始化配置管理器
         
         self.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 创建界面组件
         self.create_widgets()
+        
+        # 尝试加载保存的配置
+        self.load_config()
+        
         # 记录初始状态，用于对比是否有未保存的更改
         self.save_initial_state()
 
@@ -298,8 +304,23 @@ class SettingsFrame(ttk.Frame):
     def get_current_state(self):
         """
         快照当前所有设置项的数值。
+        处理空值情况，避免转换异常。
         """
-        state = {key: var.get() for key, var in self.vars.items()}
+        state = {}
+        for key, var in self.vars.items():
+            try:
+                state[key] = var.get()
+            except:
+                # 如果变量为空或转换失败，使用默认值
+                if key == 'target_value':
+                    state[key] = 100
+                elif key == 'press_duration':
+                    state[key] = 100
+                elif key == 'press_interval':
+                    state[key] = 500
+                else:
+                    state[key] = var.get() if hasattr(var, 'get') else ""
+        
         # 合并三个串口组件的配置
         for title, frame in self.serial_frames.items():
             state[title] = frame.get_settings()
@@ -322,10 +343,129 @@ class SettingsFrame(ttk.Frame):
             self.btn_apply.state(['disabled'])  # 禁用按钮
 
     def apply_changes(self):
-        """点击“应用”按钮后的处理逻辑"""
+        """
+        点击"应用"按钮后的处理逻辑。
+        验证输入的有效性，如果输入无效则恢复为上一次保存的值。
+        """
+        # 验证并修复无效的输入
+        self.validate_and_fix_inputs()
+        
+        # 保存初始状态
         self.save_initial_state()
         self.check_changes()
         self.log(f"Settings Applied: {self.saved_state}", "SET")
+        
+        # 自动保存配置到文件
+        self.save_config_to_file()
+    
+    def validate_and_fix_inputs(self):
+        """
+        验证输入的有效性，如果输入无效则恢复为上一次保存的值。
+        检查的字段包括：target_value, press_duration, press_interval
+        """
+        # 获取上一次保存的值（如果有）
+        last_target_value = self.saved_state.get('target_value', 100) if hasattr(self, 'saved_state') else 100
+        last_press_duration = self.saved_state.get('press_duration', 100) if hasattr(self, 'saved_state') else 100
+        last_press_interval = self.saved_state.get('press_interval', 500) if hasattr(self, 'saved_state') else 500
+        
+        # 验证并修复 target_value
+        try:
+            target_value = self.vars['target_value'].get()
+            if target_value is None or target_value <= 0:
+                raise ValueError("Invalid target value")
+        except:
+            self.vars['target_value'].set(last_target_value)
+            self.log(f"Invalid target value, restored to {last_target_value}", "SET")
+        
+        # 验证并修复 press_duration
+        try:
+            press_duration = self.vars['press_duration'].get()
+            if press_duration is None or press_duration <= 0:
+                raise ValueError("Invalid press duration")
+        except:
+            self.vars['press_duration'].set(last_press_duration)
+            self.log(f"Invalid press duration, restored to {last_press_duration}", "SET")
+        
+        # 验证并修复 press_interval
+        try:
+            press_interval = self.vars['press_interval'].get()
+            if press_interval is None or press_interval <= 0:
+                raise ValueError("Invalid press interval")
+        except:
+            self.vars['press_interval'].set(last_press_interval)
+            self.log(f"Invalid press interval, restored to {last_press_interval}", "SET")
+
+    def save_config_to_file(self):
+        """将当前配置保存到文件"""
+        config = self.get_current_state()
+        
+        # 过滤掉空值，确保配置文件中不包含空值
+        filtered_config = {}
+        for key, value in config.items():
+            if value is None or value == "":
+                continue
+            if isinstance(value, dict):
+                # 对于字典类型的配置（如串口配置），也进行过滤
+                filtered_dict = {}
+                for sub_key, sub_value in value.items():
+                    if sub_value is not None and sub_value != "":
+                        filtered_dict[sub_key] = sub_value
+                if filtered_dict:  # 只有当字典不为空时才添加
+                    filtered_config[key] = filtered_dict
+            else:
+                filtered_config[key] = value
+        
+        if self.config_manager.save_config(filtered_config):
+            self.log(f"Configuration saved to {self.config_manager.get_config_file_path()}", "SET")
+        else:
+            self.log("Failed to save configuration", "ERR")
+
+    def load_config(self):
+        """从文件加载配置"""
+        config = self.config_manager.load_config()
+        if config is None:
+            self.log("No saved configuration found, using defaults", "SET")
+            return
+        
+        try:
+            # 加载普通参数，使用默认值防止空值
+            if 'test_mode' in config and config['test_mode']:
+                self.vars['test_mode'].set(config['test_mode'])
+            
+            if 'target_value' in config and config['target_value'] is not None:
+                self.vars['target_value'].set(config['target_value'])
+            
+            if 'time_unit' in config and config['time_unit']:
+                self.vars['time_unit'].set(config['time_unit'])
+            
+            if 'press_duration' in config and config['press_duration'] is not None:
+                self.vars['press_duration'].set(config['press_duration'])
+            
+            if 'press_interval' in config and config['press_interval'] is not None:
+                self.vars['press_interval'].set(config['press_interval'])
+            
+            # 加载串口配置
+            for title, frame in self.serial_frames.items():
+                if title in config:
+                    serial_config = config[title]
+                    if serial_config and 'port' in serial_config and serial_config['port']:
+                        frame.port_var.set(serial_config['port'])
+                    if serial_config and 'baud' in serial_config and serial_config['baud'] is not None:
+                        frame.baud_var.set(serial_config['baud'])
+                    if serial_config and 'data_bits' in serial_config and serial_config['data_bits'] is not None:
+                        frame.data_bits_var.set(serial_config['data_bits'])
+                    if serial_config and 'stop_bits' in serial_config and serial_config['stop_bits'] is not None:
+                        frame.stop_bits_var.set(serial_config['stop_bits'])
+                    if serial_config and 'parity' in serial_config and serial_config['parity']:
+                        frame.parity_var.set(serial_config['parity'])
+            
+            self.log(f"Configuration loaded from {self.config_manager.get_config_file_path()}", "SET")
+            
+            # 更新UI显示
+            self.on_mode_change()
+            
+        except Exception as e:
+            self.log(f"Error loading configuration: {e}", "ERR")
 
     def get_serial_connection(self, title):
         """

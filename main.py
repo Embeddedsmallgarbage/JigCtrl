@@ -22,6 +22,9 @@ class JigCtrlApp(tk.Tk):
 
         # --- 2. 界面组件创建 ---
         self.create_widgets()
+        
+        # --- 3. 绑定窗口关闭事件 ---
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def configure_styles(self):
         """
@@ -91,6 +94,16 @@ class JigCtrlApp(tk.Tk):
         self.notebook.add(self.tab_settings, text="Parameter Settings")
         self.notebook.add(self.tab_test, text="Test Control")
         self.notebook.add(self.tab_log, text="Logs")
+
+    def on_closing(self):
+        """
+        窗口关闭时的回调函数。
+        在关闭前自动保存配置。
+        """
+        # 保存设置页签的配置
+        self.tab_settings.save_config_to_file()
+        # 关闭窗口
+        self.destroy()
 
 # --- 程序入口 ---
 if __name__ == "__main__":
