@@ -184,7 +184,7 @@ class TestControlFrame(ttk.Frame):
         mode = settings.get('test_mode')
 
         # 继电器控制十六进制指令（示例）
-        CMD_OPEN = bytes.fromhex("A0 01 00 A2")
+        CMD_OPEN = bytes.fromhex("A0 01 01 A2")
         CMD_CLOSE = bytes.fromhex("A0 01 00 A1")
 
         while self.is_running:
