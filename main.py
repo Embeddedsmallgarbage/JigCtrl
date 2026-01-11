@@ -80,11 +80,11 @@ class JigCtrlApp(tk.Tk):
         # 1. 日志页签 (最先初始化，以便其他页签可以调用其日志记录功能)
         self.tab_log = LogFrame(self.notebook)
         
-        # 2. 运动控制页签
-        self.tab_motion = MotionControlFrame(self.notebook, log_callback=self.tab_log.add_log)
-        
-        # 3. 参数设置页签
+        # 2. 参数设置页签 (先创建，以便运动控制页签可以引用)
         self.tab_settings = SettingsFrame(self.notebook, log_callback=self.tab_log.add_log)
+        
+        # 3. 运动控制页签 (传入设置页签引用，以便读取配置信息)
+        self.tab_motion = MotionControlFrame(self.notebook, log_callback=self.tab_log.add_log, settings_frame=self.tab_settings)
         
         # 4. 测试控制页签 (传入设置页签引用，以便读取配置信息)
         self.tab_test = TestControlFrame(self.notebook, settings_source=self.tab_settings, log_callback=self.tab_log.add_log)

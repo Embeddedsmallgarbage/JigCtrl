@@ -1,16 +1,44 @@
 import tkinter as tk
 from tkinter import ttk
+import threading
+import time
+from modbus_comm import ModBusComm
 
 class MotionControlFrame(ttk.Frame):
     """
     MotionControlFrame 类：运动控制界面类，继承自 ttk.Frame。
     提供方向键控制按钮以及键盘快捷键绑定功能，用于控制电机的运动。
     """
-    def __init__(self, master=None, log_callback=None):
+    def __init__(self, master=None, log_callback=None, settings_frame=None):
         super().__init__(master)
         # --- 成员变量初始化 ---
         # 日志回调函数，若未提供则默认使用 print
         self.log = log_callback if log_callback else print
+        
+        # 设置页面引用，用于获取参数配置
+        self.settings_frame = settings_frame
+        
+        # X 轴电机控制相关变量
+        self.x_axis_revolutions = 0
+        self.x_axis_max_revolutions = 100
+        self.x_axis_initialized = False
+        self.x_axis_direction = None
+        self.x_axis_speed = 100
+        self.x_axis_running = False
+        self.x_axis_stop_requested = False
+        
+        # 按键状态跟踪
+        self.key_pressed = {
+            'Left': False,
+            'Right': False
+        }
+        
+        # ModBus 通信对象
+        self.modbus = ModBusComm(device_address=1, log_callback=self.log)
+        
+        # 长按控制线程
+        self.long_press_thread = None
+        self.long_press_running = False
         
         # 填充父容器并设置内边距
         self.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -119,33 +147,248 @@ class MotionControlFrame(ttk.Frame):
     # =========================================================================
     # 逻辑处理分区 (Logic Handling)
     # =========================================================================
+    
+    def get_x_axis_serial_connection(self):
+        """
+        获取 X 轴电机的串口连接。
+        """
+        if self.settings_frame:
+            return self.settings_frame.get_serial_connection("X-Axis Motor")
+        return None
+    
+    def get_motor_speed(self):
+        """
+        从设置页面获取电机速度。
+        """
+        if self.settings_frame and hasattr(self.settings_frame, 'vars'):
+            try:
+                return self.settings_frame.vars['motor_speed'].get()
+            except:
+                pass
+        return 100
+    
+    def initialize_x_axis_motor(self, forward=True):
+        """
+        初始化 X 轴电机参数。
+        
+        :param forward: True=正转（右方向），False=反转（左方向）
+        :return: 是否成功
+        """
+        serial_conn = self.get_x_axis_serial_connection()
+        if not serial_conn:
+            self.log("X-Axis motor serial connection not available", "ERR")
+            return False
+        
+        speed = self.get_motor_speed()
+        revolutions = 1
+        
+        if self.modbus.initialize_motor(serial_conn, speed, revolutions, forward):
+            self.x_axis_initialized = True
+            self.x_axis_direction = 'forward' if forward else 'reverse'
+            self.x_axis_speed = speed
+            self.log(f"X-Axis motor initialized: speed={speed} r/min, revolutions={revolutions}, direction={'forward' if forward else 'reverse'}", "MOT")
+            return True
+        else:
+            self.log("Failed to initialize X-Axis motor", "ERR")
+            return False
+    
+    def run_x_axis_motor(self):
+        """
+        运行 X 轴电机。
+        
+        :return: 是否成功
+        """
+        serial_conn = self.get_x_axis_serial_connection()
+        if not serial_conn:
+            self.log("X-Axis motor serial connection not available", "ERR")
+            return False
+        
+        if self.modbus.run_motor(serial_conn):
+            self.x_axis_running = True
+            self.log("X-Axis motor started", "MOT")
+            return True
+        else:
+            self.log("Failed to start X-Axis motor", "ERR")
+            return False
+    
+    def stop_x_axis_motor(self):
+        """
+        停止 X 轴电机。
+        
+        :return: 是否成功
+        """
+        serial_conn = self.get_x_axis_serial_connection()
+        if not serial_conn:
+            return False
+        
+        if self.modbus.stop_motor(serial_conn):
+            self.x_axis_running = False
+            self.x_axis_stop_requested = True
+            self.log("X-Axis motor stopped", "MOT")
+            return True
+        return False
+    
+    def update_revolutions(self, forward):
+        """
+        更新圈数并检查边界。
+        
+        :param forward: True=正转（加圈数），False=反转（减圈数）
+        :return: 是否可以继续运行
+        """
+        if forward:
+            if self.x_axis_revolutions < self.x_axis_max_revolutions:
+                self.x_axis_revolutions += 1
+                self.log(f"X-Axis revolutions: {self.x_axis_revolutions}/{self.x_axis_max_revolutions}", "MOT")
+                return True
+            else:
+                self.log(f"X-Axis reached maximum revolutions ({self.x_axis_max_revolutions})", "MOT")
+                return False
+        else:
+            if self.x_axis_revolutions > 0:
+                self.x_axis_revolutions -= 1
+                self.log(f"X-Axis revolutions: {self.x_axis_revolutions}/{self.x_axis_max_revolutions}", "MOT")
+                return True
+            else:
+                self.log(f"X-Axis reached minimum revolutions (0)", "MOT")
+                return False
+    
     def on_btn_click(self, direction):
         """
-        处理方向按钮点击事件。
+        处理方向按钮点击事件（X轴：左/右方向）。
         参数:
             direction: 方向字符串 ('Up', 'Down', 'Left', 'Right')
         """
         self.log(f"Button clicked: {direction}", "MOT")
-        # --- 在此处添加发送串口指令控制电机的逻辑 ---
-
+        
+        # 只处理 X 轴方向（左/右）
+        if direction not in ['Left', 'Right']:
+            return
+        
+        # 检查串口连接是否可用（大前提）
+        serial_conn = self.get_x_axis_serial_connection()
+        if not serial_conn:
+            self.log("X-Axis motor serial connection not available", "ERR")
+            return
+        
+        forward = (direction == 'Right')
+        
+        # 检查边界
+        if not self.update_revolutions(forward):
+            return
+        
+        # 初始化电机（如果未初始化或方向改变）
+        if not self.x_axis_initialized or (self.x_axis_direction != ('forward' if forward else 'reverse')):
+            if not self.initialize_x_axis_motor(forward):
+                return
+        
+        # 运行电机
+        self.run_x_axis_motor()
+        
+        # 等待电机运行完成（一圈）
+        threading.Thread(target=self.wait_for_motor_completion, daemon=True).start()
+    
+    def wait_for_motor_completion(self):
+        """
+        等待电机运行完成（一圈）。
+        """
+        # 简单的等待逻辑，实际应该根据电机速度计算等待时间
+        # 假设电机速度为 r/min，一圈需要 60/speed 秒
+        speed = self.x_axis_speed
+        if speed > 0:
+            wait_time = 60.0 / speed
+            time.sleep(wait_time)
+        
+        # 电机运行完成后，自动停止
+        if self.x_axis_running and not self.x_axis_stop_requested:
+            self.stop_x_axis_motor()
+    
     def animate_press(self, direction, is_pressed):
         """
-        键盘快捷键按下/释放时的视觉动画效果。
+        键盘快捷键按下/释放时的处理（支持长按）。
         参数:
             direction: 方向字符串
             is_pressed: 布尔值，True 表示按下，False 表示释放
         """
+        # 只处理 X 轴方向（左/右）
+        if direction not in ['Left', 'Right']:
+            btn = self.buttons.get(direction)
+            if btn:
+                if is_pressed:
+                    btn.state(['pressed'])
+                else:
+                    btn.state(['!pressed'])
+            return
+        
         btn = self.buttons.get(direction)
         if not btn:
             return
         
+        forward = (direction == 'Right')
+        
         if is_pressed:
-            # 将按钮状态设为按下 (UI 视觉反馈)
             btn.state(['pressed'])
+            self.key_pressed[direction] = True
             self.log(f"Key pressed: {direction}", "MOT")
-            # --- 此处可添加按下键盘时的电机启动逻辑 ---
+            
+            # 检查串口连接是否可用（大前提）
+            serial_conn = self.get_x_axis_serial_connection()
+            if not serial_conn:
+                self.log("X-Axis motor serial connection not available", "ERR")
+                return
+            
+            # 检查边界
+            if not self.update_revolutions(forward):
+                return
+            
+            # 初始化电机（如果未初始化或方向改变）
+            if not self.x_axis_initialized or (self.x_axis_direction != ('forward' if forward else 'reverse')):
+                if not self.initialize_x_axis_motor(forward):
+                    return
+            
+            # 运行电机
+            self.run_x_axis_motor()
+            
+            # 启动长按控制线程
+            if not self.long_press_running:
+                self.long_press_running = True
+                self.x_axis_stop_requested = False
+                self.long_press_thread = threading.Thread(target=self.long_press_control, args=(direction,), daemon=True)
+                self.long_press_thread.start()
         else:
-            # 移除按钮按下状态
             btn.state(['!pressed'])
+            self.key_pressed[direction] = False
             self.log(f"Key released: {direction}", "MOT")
-            # --- 此处可添加松开键盘时的电机停止逻辑 ---
+            
+            # 停止电机
+            self.stop_x_axis_motor()
+    
+    def long_press_control(self, direction):
+        """
+        长按控制线程，持续运行电机直到按键释放。
+        """
+        forward = (direction == 'Right')
+        
+        while self.long_press_running and self.key_pressed[direction]:
+            # 检查是否需要停止
+            if self.x_axis_stop_requested:
+                break
+            
+            # 等待电机运行完成（一圈）
+            speed = self.x_axis_speed
+            if speed > 0:
+                wait_time = 60.0 / speed
+                time.sleep(wait_time)
+            
+            # 如果按键仍然按下，继续运行
+            if self.key_pressed[direction]:
+                # 检查边界
+                if not self.update_revolutions(forward):
+                    break
+                
+                # 运行电机
+                self.run_x_axis_motor()
+            else:
+                break
+        
+        self.long_press_running = False
+        self.x_axis_stop_requested = False

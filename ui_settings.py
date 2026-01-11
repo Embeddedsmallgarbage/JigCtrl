@@ -273,7 +273,18 @@ class SettingsFrame(ttk.Frame):
         ttk.Entry(press_frame, textvariable=self.vars['press_interval']).grid(row=0, column=3, padx=5, pady=5)
         self.vars['press_interval'].trace_add("write", lambda *args: self.check_changes())
 
-        # --- 3. 串口配置分区 (Serial Settings) ---
+        # --- 3. 电机参数设置分区 (Motor Parameter Settings) ---
+        motor_frame = ttk.LabelFrame(self, text="Motor Parameter Settings", padding=10)
+        motor_frame.pack(fill=tk.X, pady=5)
+
+        # 电机速度设置 (范围: 1-800 r/min)
+        ttk.Label(motor_frame, text="Motor Speed (r/min):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.vars['motor_speed'] = tk.IntVar(value=100)
+        entry_motor_speed = ttk.Entry(motor_frame, textvariable=self.vars['motor_speed'])
+        entry_motor_speed.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        self.vars['motor_speed'].trace_add("write", lambda *args: self.check_changes())
+
+        # --- 4. 串口配置分区 (Serial Settings) ---
         serial_container = ttk.Frame(self)
         serial_container.pack(fill=tk.BOTH, expand=True, pady=5)
 
@@ -318,6 +329,8 @@ class SettingsFrame(ttk.Frame):
                     state[key] = 100
                 elif key == 'press_interval':
                     state[key] = 500
+                elif key == 'motor_speed':
+                    state[key] = 100
                 else:
                     state[key] = var.get() if hasattr(var, 'get') else ""
         
@@ -361,12 +374,13 @@ class SettingsFrame(ttk.Frame):
     def validate_and_fix_inputs(self):
         """
         验证输入的有效性，如果输入无效则恢复为上一次保存的值。
-        检查的字段包括：target_value, press_duration, press_interval
+        检查的字段包括：target_value, press_duration, press_interval, motor_speed
         """
         # 获取上一次保存的值（如果有）
         last_target_value = self.saved_state.get('target_value', 100) if hasattr(self, 'saved_state') else 100
         last_press_duration = self.saved_state.get('press_duration', 100) if hasattr(self, 'saved_state') else 100
         last_press_interval = self.saved_state.get('press_interval', 500) if hasattr(self, 'saved_state') else 500
+        last_motor_speed = self.saved_state.get('motor_speed', 100) if hasattr(self, 'saved_state') else 100
         
         # 验证并修复 target_value
         try:
@@ -394,6 +408,15 @@ class SettingsFrame(ttk.Frame):
         except:
             self.vars['press_interval'].set(last_press_interval)
             self.log(f"Invalid press interval, restored to {last_press_interval}", "SET")
+        
+        # 验证并修复 motor_speed (范围: 1-800)
+        try:
+            motor_speed = self.vars['motor_speed'].get()
+            if motor_speed is None or motor_speed < 1 or motor_speed > 800:
+                raise ValueError("Invalid motor speed")
+        except:
+            self.vars['motor_speed'].set(last_motor_speed)
+            self.log(f"Invalid motor speed, restored to {last_motor_speed}", "SET")
 
     def save_config_to_file(self):
         """将当前配置保存到文件"""
@@ -443,6 +466,9 @@ class SettingsFrame(ttk.Frame):
             
             if 'press_interval' in config and config['press_interval'] is not None:
                 self.vars['press_interval'].set(config['press_interval'])
+            
+            if 'motor_speed' in config and config['motor_speed'] is not None:
+                self.vars['motor_speed'].set(config['motor_speed'])
             
             # 加载串口配置
             for title, frame in self.serial_frames.items():
