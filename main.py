@@ -4,6 +4,7 @@ from ui_motion import MotionControlFrame
 from ui_settings import SettingsFrame
 from ui_test_control import TestControlFrame
 from ui_log import LogFrame
+from ui_motor_debug import MotorDebugFrame
 
 class JigCtrlApp(tk.Tk):
     """
@@ -15,7 +16,7 @@ class JigCtrlApp(tk.Tk):
         # 设置窗口标题
         self.title("JigCtrl - Remote Control Jig System")
         # 设置窗口初始大小
-        self.geometry("800x600")
+        self.geometry("1000x600")
         
         # --- 1. 样式配置 ---
         self.configure_styles()
@@ -80,20 +81,24 @@ class JigCtrlApp(tk.Tk):
         # 1. 日志页签 (最先初始化，以便其他页签可以调用其日志记录功能)
         self.tab_log = LogFrame(self.notebook)
         
-        # 2. 运动控制页签
-        self.tab_motion = MotionControlFrame(self.notebook, log_callback=self.tab_log.add_log)
-        
-        # 3. 参数设置页签
+        # 2. 参数设置页签 (先初始化，因为运动控制需要获取Y轴串口连接)
         self.tab_settings = SettingsFrame(self.notebook, log_callback=self.tab_log.add_log)
+        
+        # 3. 运动控制页签 (传入设置页签引用，以便获取Y轴串口连接)
+        self.tab_motion = MotionControlFrame(self.notebook, settings_source=self.tab_settings, log_callback=self.tab_log.add_log)
         
         # 4. 测试控制页签 (传入设置页签引用，以便读取配置信息)
         self.tab_test = TestControlFrame(self.notebook, settings_source=self.tab_settings, log_callback=self.tab_log.add_log)
 
-        # 将页签添加到 Notebook 中显示
+        # 5. 电机命令调试页签
+        self.tab_motor_debug = MotorDebugFrame(self.notebook, log_callback=self.tab_log.add_log)
+
+        # 将页签添加到 Notebook 中显示 (Motor Debug 在最右端)
         self.notebook.add(self.tab_motion, text="Motion Control")
         self.notebook.add(self.tab_settings, text="Parameter Settings")
         self.notebook.add(self.tab_test, text="Test Control")
         self.notebook.add(self.tab_log, text="Logs")
+        self.notebook.add(self.tab_motor_debug, text="Motor Debug")
 
     def on_closing(self):
         """
