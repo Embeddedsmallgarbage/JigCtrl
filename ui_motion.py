@@ -126,6 +126,7 @@ class MotionControlFrame(ttk.Frame):
         """
         处理按钮/键盘按下事件。
         启动定时器检测是否为长按。
+        在发送命令前先查询电机是否正在运行，如果正在运行则忽略此次按键。
         """
         axis_name, serial_key, _ = self.get_axis_info(direction)
         if axis_name is None:
@@ -134,6 +135,19 @@ class MotionControlFrame(ttk.Frame):
 
         # 如果已经在按下状态（键盘自动重复），则忽略
         if self.is_pressing.get(direction, False):
+            return
+
+        # 先检查电机是否正在运行
+        serial_conn = self.get_serial_connection(serial_key)
+        if serial_conn:
+            if self.is_motor_running(serial_conn, serial_key):
+                self.log(f"Button pressed: {direction} ({axis_name}) - Ignored, motor is already running", "MOT")
+                # 标记此次按键被忽略，这样 release 不会执行操作
+                self.is_pressing[direction] = False
+                self.is_long_press[direction] = False
+                return
+        else:
+            self.log(f"Button pressed: {direction} ({axis_name}) - {serial_key} not connected", "ERR")
             return
 
         self.is_pressing[direction] = True
@@ -164,9 +178,17 @@ class MotionControlFrame(ttk.Frame):
         """
         处理按钮/键盘释放事件。
         根据是点按还是长按执行不同的操作。
+        如果 press 被忽略（is_pressing 为 False），则 release 也不执行操作。
         """
         axis_name, serial_key, _ = self.get_axis_info(direction)
         if axis_name is None:
+            return
+
+        # 如果 press 被忽略（电机正在运行或串口未连接），则 release 也不执行操作
+        if not self.is_pressing.get(direction, False):
+            btn = self.buttons.get(direction)
+            if btn:
+                btn.state(['!pressed'])
             return
 
         self.is_pressing[direction] = False
@@ -280,6 +302,51 @@ class MotionControlFrame(ttk.Frame):
         if self.settings_source:
             return self.settings_source.get_serial_connection(serial_key)
         return None
+
+    def is_motor_running(self, serial_conn, serial_key):
+        """
+        查询电机是否正在运行。
+        通过读取寄存器 0x02 (运行/暂停状态) 来判断。
+
+        :param serial_conn: 串口连接对象
+        :param serial_key: 串口键名
+        :return: True 如果电机正在运行，False 否则
+        """
+        try:
+            port_info = self.get_serial_port_info(serial_conn, serial_key)
+
+            # 清空接收缓冲区
+            serial_conn.reset_input_buffer()
+
+            # 构建读取命令 (功能码 0x03)
+            data = struct.pack('>BBHH', self.device_addr, 0x03, 0x02, 0x01)
+            crc = self.calculate_crc(data)
+            crc_low = crc & 0xFF
+            crc_high = (crc >> 8) & 0xFF
+            command = data + bytes([crc_low, crc_high])
+
+            # 发送命令
+            serial_conn.write(command)
+            hex_str = ' '.join([f'{b:02X}' for b in command])
+            self.log(f"{port_info} TX: [{hex_str}] Query Run Status", "MOT")
+
+            # 等待接收回复（读命令回复通常是7字节）
+            response = self.wait_for_response(serial_conn, expected_length=7, timeout=0.5)
+
+            if response and len(response) >= 7:
+                resp_hex = ' '.join([f'{b:02X}' for b in response])
+                self.log(f"{port_info} RX: [{resp_hex}]", "MOT")
+                # 解析回复：第4个字节是数据高位，第5个字节是数据低位
+                # 如果值为1，表示正在运行
+                run_status = response[4] if len(response) > 4 else 0
+                return run_status == 1
+            else:
+                self.log(f"{port_info} RX: [Timeout - No response received]", "ERR")
+                return False
+
+        except Exception as e:
+            self.log(f"Error querying motor status: {e}", "ERR")
+            return False
 
     def calculate_crc(self, data):
         """
