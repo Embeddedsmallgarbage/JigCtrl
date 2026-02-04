@@ -28,15 +28,113 @@ class MotionControlFrame(ttk.Frame):
         self.is_pressing = {}
         self.press_timer = {}
 
+        # 脉冲数显示变量
+        self.x_pulse_var = tk.StringVar(value="--")
+        self.y_pulse_var = tk.StringVar(value="--")
+
         self.create_widgets()
         self.bind_keys()
 
     def create_widgets(self):
         """
-        创建运动控制界面的所有子组件，主要是十字型布局的方向控制按钮。
+        创建运动控制界面的所有子组件。
+        包含按键控制区域和坐标系构建区域。
         """
-        self.control_container = ttk.Frame(self)
-        self.control_container.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        # --- 按键控制区域 (Button Control Area) ---
+        self.control_frame = ttk.LabelFrame(self, text="Button Control", padding=10)
+        self.control_frame.pack(anchor=tk.NW, padx=10, pady=10)
+
+        # 方向按钮容器
+        self.control_container = ttk.Frame(self.control_frame)
+        self.control_container.pack(expand=True)
+
+        # --- 坐标系构建区域 (Coordinate System Area) ---
+        self.coord_frame = ttk.LabelFrame(self, text="Coordinate System", padding=10)
+        self.coord_frame.pack(anchor=tk.NW, padx=10, pady=10, fill=tk.X)
+
+        # 设置原点按钮和回到原点按钮区域
+        origin_button_frame = ttk.Frame(self.coord_frame)
+        origin_button_frame.pack(anchor=tk.W, padx=5, pady=5, fill=tk.X)
+
+        # 设置原点按钮
+        self.btn_set_origin = ttk.Button(
+            origin_button_frame,
+            text="Set Origin",
+            command=self.on_set_origin
+        )
+        self.btn_set_origin.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 回到原点按钮
+        self.btn_return_origin = ttk.Button(
+            origin_button_frame,
+            text="Return to Origin",
+            command=self.on_return_to_origin
+        )
+        self.btn_return_origin.pack(side=tk.LEFT, padx=(0, 20))
+
+        # 回原点速度控制区域
+        ttk.Label(origin_button_frame, text="Homing Speed:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 回原点速度输入框
+        self.homing_speed_var = tk.StringVar(value="100")
+        self.entry_homing_speed = ttk.Entry(origin_button_frame, textvariable=self.homing_speed_var, width=8)
+        self.entry_homing_speed.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 获取回原点速度按钮
+        self.btn_get_homing_speed = ttk.Button(
+            origin_button_frame,
+            text="Get",
+            command=self.on_get_homing_speed,
+            width=6
+        )
+        self.btn_get_homing_speed.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 设置回原点速度按钮
+        self.btn_set_homing_speed = ttk.Button(
+            origin_button_frame,
+            text="Set",
+            command=self.on_set_homing_speed,
+            width=6
+        )
+        self.btn_set_homing_speed.pack(side=tk.LEFT)
+
+        # 获取脉冲数按钮和显示区域
+        pulse_frame = ttk.Frame(self.coord_frame)
+        pulse_frame.pack(anchor=tk.W, padx=5, pady=5, fill=tk.X)
+
+        # 左侧：按钮区域
+        button_frame = ttk.Frame(pulse_frame)
+        button_frame.pack(side=tk.LEFT)
+
+        # 获取X轴脉冲数按钮
+        self.btn_get_x_pulse = ttk.Button(
+            button_frame,
+            text="Get X-Axis Pulse",
+            command=lambda: self.on_get_pulse("X-Axis", "X-Axis Motor")
+        )
+        self.btn_get_x_pulse.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 获取Y轴脉冲数按钮
+        self.btn_get_y_pulse = ttk.Button(
+            button_frame,
+            text="Get Y-Axis Pulse",
+            command=lambda: self.on_get_pulse("Y-Axis", "Y-Axis Motor")
+        )
+        self.btn_get_y_pulse.pack(side=tk.LEFT)
+
+        # 右侧：脉冲数显示区域
+        display_frame = ttk.Frame(pulse_frame)
+        display_frame.pack(side=tk.LEFT, padx=(20, 0))
+
+        # X轴脉冲数显示
+        ttk.Label(display_frame, text="X-Axis Pulse:").pack(side=tk.LEFT, padx=(0, 5))
+        self.lbl_x_pulse = ttk.Label(display_frame, textvariable=self.x_pulse_var, font=("Cambria", 10, "bold"), foreground="blue")
+        self.lbl_x_pulse.pack(side=tk.LEFT, padx=(0, 20))
+
+        # Y轴脉冲数显示
+        ttk.Label(display_frame, text="Y-Axis Pulse:").pack(side=tk.LEFT, padx=(0, 5))
+        self.lbl_y_pulse = ttk.Label(display_frame, textvariable=self.y_pulse_var, font=("Cambria", 10, "bold"), foreground="blue")
+        self.lbl_y_pulse.pack(side=tk.LEFT)
 
         style = ttk.Style()
         style.configure("Dir.TButton", font=("Arial", 12, "bold"), width=8)
@@ -209,6 +307,185 @@ class MotionControlFrame(ttk.Frame):
             self.execute_single_step(direction)
 
         self.is_long_press[direction] = False
+
+    def on_set_origin(self):
+        """
+        设置原点按钮回调函数。
+        向 X 轴和 Y 轴电机发送设置原点命令（寄存器 0x15）。
+        """
+        axes = [
+            ("X-Axis", "X-Axis Motor"),
+            ("Y-Axis", "Y-Axis Motor")
+        ]
+
+        for axis_name, serial_key in axes:
+            serial_conn = self.get_serial_connection(serial_key)
+            if serial_conn:
+                # 发送设置原点命令 (寄存器 0x15, 值 0x01)
+                if self.send_command_and_wait_response(serial_conn, serial_key, 0x15, 0x01):
+                    self.log(f"Origin set successfully for {axis_name}", "MOT")
+                else:
+                    self.log(f"Failed to set origin for {axis_name}", "ERR")
+            else:
+                self.log(f"Error: {serial_key} serial port not open", "ERR")
+
+    def on_return_to_origin(self):
+        """
+        回到原点按钮回调函数。
+        向 X 轴和 Y 轴电机发送回到原点命令（寄存器 0x0A）。
+        """
+        axes = [
+            ("X-Axis", "X-Axis Motor"),
+            ("Y-Axis", "Y-Axis Motor")
+        ]
+
+        for axis_name, serial_key in axes:
+            serial_conn = self.get_serial_connection(serial_key)
+            if serial_conn:
+                # 发送回到原点命令 (寄存器 0x0A, 值 0x01)
+                if self.send_command_and_wait_response(serial_conn, serial_key, 0x0A, 0x01):
+                    self.log(f"Return to origin command sent successfully for {axis_name}", "MOT")
+                else:
+                    self.log(f"Failed to send return to origin command for {axis_name}", "ERR")
+            else:
+                self.log(f"Error: {serial_key} serial port not open", "ERR")
+
+    def on_get_homing_speed(self):
+        """
+        获取回原点速度按钮回调函数。
+        读取寄存器 0x1A，返回 2 字节速度数据。
+        """
+        # 优先读取 X 轴的回原点速度
+        serial_key = "X-Axis Motor"
+        axis_name = "X-Axis"
+        
+        serial_conn = self.get_serial_connection(serial_key)
+        if not serial_conn:
+            self.log(f"Error: {serial_key} serial port not open", "ERR")
+            return
+
+        try:
+            port_info = self.get_serial_port_info(serial_conn, serial_key)
+
+            # 清空接收缓冲区
+            serial_conn.reset_input_buffer()
+
+            # 构建读取命令 (功能码 0x03, 寄存器 0x1A, 读取 1 个寄存器 = 2 字节)
+            data = struct.pack('>BBHH', self.device_addr, 0x03, 0x1A, 0x01)
+            crc = self.calculate_crc(data)
+            crc_low = crc & 0xFF
+            crc_high = (crc >> 8) & 0xFF
+            command = data + bytes([crc_low, crc_high])
+
+            # 发送命令
+            serial_conn.write(command)
+            hex_str = ' '.join([f'{b:02X}' for b in command])
+            self.log(f"{port_info} TX: [{hex_str}] Query Homing Speed", "MOT")
+
+            # 等待接收回复（读命令回复通常是7字节：地址+功能码+字节数+2字节数据+2字节CRC）
+            response = self.wait_for_response(serial_conn, expected_length=7, timeout=0.5)
+
+            if response and len(response) >= 7:
+                resp_hex = ' '.join([f'{b:02X}' for b in response])
+                # 解析回复：第2字节是数据字节数(0x02)，第3-4字节是速度数据(2字节，大端模式)
+                homing_speed = (response[3] << 8) | response[4]
+                self.log(f"{port_info} RX: [{resp_hex}] Homing Speed = {homing_speed} RPM", "MOT")
+                # 更新输入框显示
+                self.homing_speed_var.set(str(homing_speed))
+            else:
+                self.log(f"{port_info} RX: [Timeout - No response received]", "ERR")
+
+        except Exception as e:
+            self.log(f"Error querying homing speed for {axis_name}: {e}", "ERR")
+
+    def on_set_homing_speed(self):
+        """
+        设置回原点速度按钮回调函数。
+        向 X 轴和 Y 轴电机发送设置回原点速度命令（寄存器 0x1A）。
+        """
+        try:
+            # 获取输入的速度值
+            speed_str = self.homing_speed_var.get()
+            speed = int(speed_str)
+            
+            # 验证速度范围
+            if speed < 1 or speed > 800:
+                self.log(f"Error: Homing speed must be between 1 and 800 RPM", "ERR")
+                return
+            
+            axes = [
+                ("X-Axis", "X-Axis Motor"),
+                ("Y-Axis", "Y-Axis Motor")
+            ]
+
+            for axis_name, serial_key in axes:
+                serial_conn = self.get_serial_connection(serial_key)
+                if serial_conn:
+                    # 发送设置回原点速度命令 (寄存器 0x1A, 值为速度)
+                    if self.send_command_and_wait_response(serial_conn, serial_key, 0x1A, speed):
+                        self.log(f"Homing speed set to {speed} RPM for {axis_name}", "MOT")
+                    else:
+                        self.log(f"Failed to set homing speed for {axis_name}", "ERR")
+                else:
+                    self.log(f"Error: {serial_key} serial port not open", "ERR")
+
+        except ValueError:
+            self.log(f"Error: Invalid homing speed value '{self.homing_speed_var.get()}'", "ERR")
+        except Exception as e:
+            self.log(f"Error setting homing speed: {e}", "ERR")
+
+    def on_get_pulse(self, axis_name, serial_key):
+        """
+        获取指定轴的运行脉冲数按钮回调函数。
+        读取寄存器 0x18，返回 4 字节脉冲数据。
+
+        :param axis_name: 轴名称 ("X-Axis" 或 "Y-Axis")
+        :param serial_key: 串口键名 ("X-Axis Motor" 或 "Y-Axis Motor")
+        """
+        serial_conn = self.get_serial_connection(serial_key)
+        if not serial_conn:
+            self.log(f"Error: {serial_key} serial port not open", "ERR")
+            return
+
+        try:
+            port_info = self.get_serial_port_info(serial_conn, serial_key)
+
+            # 清空接收缓冲区
+            serial_conn.reset_input_buffer()
+
+            # 构建读取命令 (功能码 0x03, 寄存器 0x18, 读取 2 个寄存器 = 4 字节)
+            data = struct.pack('>BBHH', self.device_addr, 0x03, 0x18, 0x02)
+            crc = self.calculate_crc(data)
+            crc_low = crc & 0xFF
+            crc_high = (crc >> 8) & 0xFF
+            command = data + bytes([crc_low, crc_high])
+
+            # 发送命令
+            serial_conn.write(command)
+            hex_str = ' '.join([f'{b:02X}' for b in command])
+            self.log(f"{port_info} TX: [{hex_str}] Query Pulse Count", "MOT")
+
+            # 等待接收回复（读命令回复通常是9字节：地址+功能码+字节数+4字节数据+2字节CRC）
+            response = self.wait_for_response(serial_conn, expected_length=9, timeout=0.5)
+
+            if response and len(response) >= 9:
+                resp_hex = ' '.join([f'{b:02X}' for b in response])
+                # 解析回复：第2字节是数据字节数(0x04)，第3-6字节是脉冲数据(4字节，大端模式，有符号)
+                pulse_count_unsigned = (response[3] << 24) | (response[4] << 16) | (response[5] << 8) | response[6]
+                # 将有符号数转换为Python整数（32位有符号）
+                pulse_count = pulse_count_unsigned if pulse_count_unsigned < 0x80000000 else pulse_count_unsigned - 0x100000000
+                self.log(f"{port_info} RX: [{resp_hex}] Pulse Count = {pulse_count}", "MOT")
+                
+                # 更新界面显示
+                if axis_name == "X-Axis":
+                    self.x_pulse_var.set(str(pulse_count))
+                elif axis_name == "Y-Axis":
+                    self.y_pulse_var.set(str(pulse_count))
+            else:
+                self.log(f"{port_info} RX: [Timeout - No response received]", "ERR")
+
+        except Exception as e:
+            self.log(f"Error querying pulse count for {axis_name}: {e}", "ERR")
 
     def execute_single_step(self, direction):
         """
