@@ -3,6 +3,8 @@ from tkinter import ttk
 import struct
 import threading
 import time
+from key_manager import KeyManager
+from key_selection_window import KeySelectionWindow
 
 
 class MotionControlFrame(ttk.Frame):
@@ -32,8 +34,16 @@ class MotionControlFrame(ttk.Frame):
         self.x_pulse_var = tk.StringVar(value="--")
         self.y_pulse_var = tk.StringVar(value="--")
 
+        # 按键管理器
+        self.key_manager = KeyManager()
+        
+        # 测试键绑定相关变量
+        self.binding_items = []  # 存储所有绑定项的UI组件
+        self.current_binding_data = None  # 当前正在绑定的数据
+
         self.create_widgets()
         self.bind_keys()
+        self.load_bindings()
 
     def create_widgets(self):
         """
@@ -160,16 +170,48 @@ class MotionControlFrame(ttk.Frame):
             btn.bind('<ButtonPress-1>', lambda e, d=direction: self.on_press(d))
             btn.bind('<ButtonRelease-1>', lambda e, d=direction: self.on_release(d))
 
+        # --- 测试键绑定区域 (Test Key Binding Area) ---
+        self.binding_frame = ttk.LabelFrame(self, text="Test Key Binding", padding=10)
+        self.binding_frame.pack(anchor=tk.NW, padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        # 新增绑定按钮
+        self.btn_add_binding = ttk.Button(
+            self.binding_frame,
+            text="Add Binding",
+            command=self.on_add_binding
+        )
+        self.btn_add_binding.pack(anchor=tk.W, pady=5)
+
+        # 已绑定按键显示区域（使用Canvas和滚动条）
+        binding_container = ttk.Frame(self.binding_frame)
+        binding_container.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.binding_canvas = tk.Canvas(binding_container, background="white", highlightthickness=0)
+        self.binding_scrollbar = ttk.Scrollbar(binding_container, orient="vertical", command=self.binding_canvas.yview)
+        self.binding_canvas.configure(yscrollcommand=self.binding_scrollbar.set)
+
+        self.binding_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.binding_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.binding_inner_frame = ttk.Frame(self.binding_canvas)
+        self.binding_canvas_window = self.binding_canvas.create_window((0, 0), window=self.binding_inner_frame, anchor="nw")
+
+        self.binding_inner_frame.bind("<Configure>", self._on_binding_frame_configure)
+        self.binding_canvas.bind("<Configure>", self._on_binding_canvas_configure)
+        self.binding_canvas.bind_all("<MouseWheel>", self._on_binding_mousewheel)
+
+    def _on_binding_frame_configure(self, event):
+        self.binding_canvas.configure(scrollregion=self.binding_canvas.bbox("all"))
+
+    def _on_binding_canvas_configure(self, event):
+        self.binding_canvas.itemconfig(self.binding_canvas_window, width=event.width)
+
+    def _on_binding_mousewheel(self, event):
+        self.binding_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
     def bind_keys(self):
         """
-        绑定页面可见性相关的事件，确保快捷键仅在该页签可见时生效。
-        """
-        self.bind('<Visibility>', self.on_visibility)
-        self.bind('<Unmap>', self.on_unmap)
-
-    def on_visibility(self, event):
-        """
-        当运动控制页签被激活/可见时，启用全局键盘绑定。
+        绑定全局键盘事件，只要串口打开就可以控制电机。
         """
         top = self.winfo_toplevel()
 
@@ -181,25 +223,6 @@ class MotionControlFrame(ttk.Frame):
         self.bind_id_release_left = top.bind('<KeyRelease-Left>', lambda e: self.on_release('Left'))
         self.bind_id_press_right = top.bind('<KeyPress-Right>', lambda e: self.on_press('Right'))
         self.bind_id_release_right = top.bind('<KeyRelease-Right>', lambda e: self.on_release('Right'))
-
-        self.focus_set()
-
-    def on_unmap(self, event):
-        """
-        当切换到其他页签时，解除键盘绑定，防止误触发电机运动。
-        """
-        top = self.winfo_toplevel()
-        try:
-            top.unbind('<KeyPress-Up>', self.bind_id_press_up)
-            top.unbind('<KeyRelease-Up>', self.bind_id_release_up)
-            top.unbind('<KeyPress-Down>', self.bind_id_press_down)
-            top.unbind('<KeyRelease-Down>', self.bind_id_release_down)
-            top.unbind('<KeyPress-Left>', self.bind_id_press_left)
-            top.unbind('<KeyRelease-Left>', self.bind_id_release_left)
-            top.unbind('<KeyPress-Right>', self.bind_id_press_right)
-            top.unbind('<KeyRelease-Right>', self.bind_id_release_right)
-        except (tk.TclError, AttributeError):
-            pass
 
     def get_axis_info(self, direction):
         """
@@ -762,3 +785,255 @@ class MotionControlFrame(ttk.Frame):
             return bytes(response) if len(response) > 0 else None
         finally:
             serial_conn.timeout = original_timeout
+
+    # =========================================================================
+    # 测试键绑定功能分区 (Test Key Binding)
+    # =========================================================================
+    def load_bindings(self):
+        """从配置文件加载所有按键绑定"""
+        bindings = self.key_manager.get_bindings()
+        
+        for binding in bindings:
+            self.create_binding_item(
+                binding['key_name'],
+                binding['x_pulse'],
+                binding['y_pulse']
+            )
+
+    def on_add_binding(self):
+        """新增绑定按键按钮回调"""
+        # 获取X轴和Y轴的脉冲数
+        x_pulse = self.get_pulse_value("X-Axis", "X-Axis Motor")
+        y_pulse = self.get_pulse_value("Y-Axis", "Y-Axis Motor")
+        
+        # 检查是否获取成功（暂时注释掉）
+        if x_pulse is None or y_pulse is None:
+            from tkinter import messagebox
+            messagebox.showerror("错误", "无法获取X/Y轴脉冲数，请检查串口连接")
+            return
+        
+        # 保存当前绑定的数据
+        self.current_binding_data = {
+            'x_pulse': x_pulse,
+            'y_pulse': y_pulse
+        }
+        
+        # 创建临时绑定项显示脉冲数
+        temp_item = self.create_binding_item("Pending", x_pulse, y_pulse, is_temp=True)
+        
+        # 打开按键选择窗口
+        self.open_key_selection_window(temp_item)
+
+    def get_pulse_value(self, axis_name, serial_key):
+        """获取指定轴的脉冲数
+        
+        :param axis_name: 轴名称
+        :param serial_key: 串口键名
+        :return: 脉冲数，失败返回None
+        """
+        serial_conn = self.get_serial_connection(serial_key)
+        if not serial_conn:
+            self.log(f"Error: {serial_key} serial port not open", "ERR")
+            return None
+        
+        try:
+            port_info = self.get_serial_port_info(serial_conn, serial_key)
+            serial_conn.reset_input_buffer()
+            
+            data = struct.pack('>BBHH', self.device_addr, 0x03, 0x18, 0x02)
+            crc = self.calculate_crc(data)
+            crc_low = crc & 0xFF
+            crc_high = (crc >> 8) & 0xFF
+            command = data + bytes([crc_low, crc_high])
+            
+            serial_conn.write(command)
+            hex_str = ' '.join([f'{b:02X}' for b in command])
+            self.log(f"{port_info} TX: [{hex_str}] Query Pulse Count", "MOT")
+            
+            response = self.wait_for_response(serial_conn, expected_length=9, timeout=0.5)
+            
+            if response and len(response) >= 9:
+                resp_hex = ' '.join([f'{b:02X}' for b in response])
+                pulse_count_unsigned = (response[3] << 24) | (response[4] << 16) | (response[5] << 8) | response[6]
+                pulse_count = pulse_count_unsigned if pulse_count_unsigned < 0x80000000 else pulse_count_unsigned - 0x100000000
+                self.log(f"{port_info} RX: [{resp_hex}] Pulse Count = {pulse_count}", "MOT")
+                return pulse_count
+            else:
+                self.log(f"{port_info} RX: [Timeout - No response received]", "ERR")
+                return None
+        except Exception as e:
+            self.log(f"Error querying pulse count for {axis_name}: {e}", "ERR")
+            return None
+
+    def create_binding_item(self, key_name, x_pulse, y_pulse, is_temp=False):
+        """创建一个绑定项UI
+        
+        :param key_name: 按键名称
+        :param x_pulse: X轴脉冲数
+        :param y_pulse: Y轴脉冲数
+        :param is_temp: 是否为临时项（未完成绑定）
+        :return: 绑定项字典
+        """
+        item_frame = ttk.Frame(self.binding_inner_frame)
+        item_frame.pack(fill=tk.X, pady=2, padx=2)
+        
+        # 按键名称
+        lbl_key = ttk.Label(item_frame, text=f"Key: {key_name}", width=20)
+        lbl_key.pack(side=tk.LEFT, padx=5)
+        
+        # X轴脉冲数
+        x_pulse_text = str(x_pulse) if x_pulse is not None else "error"
+        lbl_x = ttk.Label(item_frame, text=f"X: {x_pulse_text}", width=15, foreground="blue" if x_pulse is not None else "red")
+        lbl_x.pack(side=tk.LEFT, padx=5)
+        
+        # Y轴脉冲数
+        y_pulse_text = str(y_pulse) if y_pulse is not None else "error"
+        lbl_y = ttk.Label(item_frame, text=f"Y: {y_pulse_text}", width=15, foreground="blue" if y_pulse is not None else "red")
+        lbl_y.pack(side=tk.LEFT, padx=5)
+        
+        # 选择按键和取消按钮（仅临时项显示）
+        btn_select = None
+        btn_cancel = None
+        if is_temp:
+            btn_select = ttk.Button(
+                item_frame,
+                text="Select Key",
+                command=lambda: self.open_key_selection_window(item_frame)
+            )
+            btn_select.pack(side=tk.LEFT, padx=5)
+            
+            btn_cancel = ttk.Button(
+                item_frame,
+                text="Cancel",
+                command=lambda: self.cancel_binding(item_frame)
+            )
+            btn_cancel.pack(side=tk.LEFT, padx=5)
+        
+        # 绑定右键菜单到所有子组件
+        for widget in [item_frame, lbl_key, lbl_x, lbl_y]:
+            widget.bind("<Button-3>", lambda e, f=item_frame, k=key_name: self.show_binding_context_menu(e, f, k))
+            widget.bind("<Button-2>", lambda e, f=item_frame, k=key_name: self.show_binding_context_menu(e, f, k))  # Windows兼容
+        
+        item_data = {
+            'frame': item_frame,
+            'key_name': key_name,
+            'x_pulse': x_pulse,
+            'y_pulse': y_pulse,
+            'is_temp': is_temp,
+            'lbl_key': lbl_key,
+            'lbl_x': lbl_x,
+            'lbl_y': lbl_y,
+            'btn_select': btn_select,
+            'btn_cancel': btn_cancel
+        }
+        
+        self.binding_items.append(item_data)
+        
+        # 更新滚动区域
+        self._on_binding_frame_configure(None)
+        
+        return item_data
+
+    def open_key_selection_window(self, item_frame):
+        """打开按键选择窗口
+        
+        :param item_frame: 绑定项的frame
+        """
+        # 找到对应的item_data
+        item_data = None
+        for item in self.binding_items:
+            if item['frame'] == item_frame:
+                item_data = item
+                break
+        
+        if item_data is None:
+            return
+        
+        # 检查脉冲数是否为error（暂时注释掉，用于测试按键绑定窗口）
+        if item_data['x_pulse'] is None or item_data['y_pulse'] is None:
+            from tkinter import messagebox
+            messagebox.showerror("错误", "运行脉冲数为error，无法绑定")
+            return
+        
+        # 打开按键选择窗口
+        selection_window = KeySelectionWindow(
+            self,
+            self.key_manager,
+            lambda key_name: self.on_key_selected(item_data, key_name)
+        )
+
+    def on_key_selected(self, item_data, key_name):
+        """按键选择完成后的回调
+        
+        :param item_data: 绑定项数据
+        :param key_name: 选择的按键名称
+        """
+        # 更新绑定项
+        item_data['key_name'] = key_name
+        item_data['is_temp'] = False
+        item_data['lbl_key'].config(text=f"按键: {key_name}")
+        
+        # 移除选择按钮
+        if item_data['btn_select']:
+            item_data['btn_select'].pack_forget()
+            item_data['btn_select'] = None
+        
+        # 保存到配置文件
+        self.key_manager.add_binding(key_name, item_data['x_pulse'], item_data['y_pulse'])
+        
+        self.log(f"Key binding added: {key_name} (X: {item_data['x_pulse']}, Y: {item_data['y_pulse']})", "MOT")
+
+    def show_binding_context_menu(self, event, item_frame, key_name):
+        """显示绑定项的右键菜单
+        
+        :param event: 鼠标事件
+        :param item_frame: 绑定项的frame
+        :param key_name: 按键名称
+        """
+        # 如果是临时项，不显示菜单
+        for item in self.binding_items:
+            if item['frame'] == item_frame and item['is_temp']:
+                return
+        
+        context_menu = tk.Menu(self, tearoff=0)
+        context_menu.add_command(label="Delete", command=lambda: self.delete_binding(item_frame, key_name))
+        
+        context_menu.post(event.x_root, event.y_root)
+
+    def delete_binding(self, item_frame, key_name):
+        """删除绑定项
+        
+        :param item_frame: 绑定项的frame
+        :param key_name: 按键名称
+        """
+        # 从配置文件中删除
+        self.key_manager.remove_binding(key_name)
+        
+        # 从UI中删除
+        for i, item in enumerate(self.binding_items):
+            if item['frame'] == item_frame:
+                item['frame'].destroy()
+                self.binding_items.pop(i)
+                break
+        
+        self.log(f"Key binding deleted: {key_name}", "MOT")
+        
+        # 更新滚动区域
+        self._on_binding_frame_configure(None)
+
+    def cancel_binding(self, item_frame):
+        """取消临时绑定项
+        
+        :param item_frame: 绑定项的frame
+        """
+        # 从UI中删除
+        for i, item in enumerate(self.binding_items):
+            if item['frame'] == item_frame:
+                item['frame'].destroy()
+                self.binding_items.pop(i)
+                break
+        
+        self.log("Key binding cancelled", "MOT")
+        
+        # 更新滚动区域
+        self._on_binding_frame_configure(None)

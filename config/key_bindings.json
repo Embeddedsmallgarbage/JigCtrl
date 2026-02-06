@@ -1,0 +1,14 @@
+{
+    "bindings": [
+        {
+            "key_name": "Input",
+            "x_pulse": 100,
+            "y_pulse": 100
+        },
+        {
+            "key_name": "Volume+",
+            "x_pulse": 200,
+            "y_pulse": 200
+        }
+    ]
+}
