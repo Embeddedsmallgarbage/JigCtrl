@@ -50,114 +50,26 @@ class MotionControlFrame(ttk.Frame):
         创建运动控制界面的所有子组件。
         包含按键控制区域和坐标系构建区域。
         """
-        # --- 按键控制区域 (Button Control Area) ---
-        self.control_frame = ttk.LabelFrame(self, text="Button Control", padding=10)
-        self.control_frame.pack(anchor=tk.NW, padx=10, pady=10)
+        # --- 顶部：按键控制区域 (Button Control Area) ---
+        top_frame = ttk.Frame(self)
+        top_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.control_frame = ttk.LabelFrame(top_frame, text="Manual Control", padding=15)
+        self.control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
 
         # 方向按钮容器
         self.control_container = ttk.Frame(self.control_frame)
         self.control_container.pack(expand=True)
 
-        # --- 坐标系构建区域 (Coordinate System Area) ---
-        self.coord_frame = ttk.LabelFrame(self, text="Coordinate System", padding=10)
-        self.coord_frame.pack(anchor=tk.NW, padx=10, pady=10, fill=tk.X)
+        self.btn_up = ttk.Button(self.control_container, text="▲\nUp", style="Dir.TButton")
+        self.btn_left = ttk.Button(self.control_container, text="◀\nLeft", style="Dir.TButton")
+        self.btn_down = ttk.Button(self.control_container, text="▼\nDown", style="Dir.TButton")
+        self.btn_right = ttk.Button(self.control_container, text="▶\nRight", style="Dir.TButton")
 
-        # 设置原点按钮和回到原点按钮区域
-        origin_button_frame = ttk.Frame(self.coord_frame)
-        origin_button_frame.pack(anchor=tk.W, padx=5, pady=5, fill=tk.X)
-
-        # 设置原点按钮
-        self.btn_set_origin = ttk.Button(
-            origin_button_frame,
-            text="Set Origin",
-            command=self.on_set_origin
-        )
-        self.btn_set_origin.pack(side=tk.LEFT, padx=(0, 5))
-
-        # 回到原点按钮
-        self.btn_return_origin = ttk.Button(
-            origin_button_frame,
-            text="Return to Origin",
-            command=self.on_return_to_origin
-        )
-        self.btn_return_origin.pack(side=tk.LEFT, padx=(0, 20))
-
-        # 回原点速度控制区域
-        ttk.Label(origin_button_frame, text="Homing Speed:").pack(side=tk.LEFT, padx=(0, 5))
-        
-        # 回原点速度输入框
-        self.homing_speed_var = tk.StringVar(value="100")
-        self.entry_homing_speed = ttk.Entry(origin_button_frame, textvariable=self.homing_speed_var, width=8)
-        self.entry_homing_speed.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # 获取回原点速度按钮
-        self.btn_get_homing_speed = ttk.Button(
-            origin_button_frame,
-            text="Get",
-            command=self.on_get_homing_speed,
-            width=6
-        )
-        self.btn_get_homing_speed.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # 设置回原点速度按钮
-        self.btn_set_homing_speed = ttk.Button(
-            origin_button_frame,
-            text="Set",
-            command=self.on_set_homing_speed,
-            width=6
-        )
-        self.btn_set_homing_speed.pack(side=tk.LEFT)
-
-        # 获取脉冲数按钮和显示区域
-        pulse_frame = ttk.Frame(self.coord_frame)
-        pulse_frame.pack(anchor=tk.W, padx=5, pady=5, fill=tk.X)
-
-        # 左侧：按钮区域
-        button_frame = ttk.Frame(pulse_frame)
-        button_frame.pack(side=tk.LEFT)
-
-        # 获取X轴脉冲数按钮
-        self.btn_get_x_pulse = ttk.Button(
-            button_frame,
-            text="Get X-Axis Pulse",
-            command=lambda: self.on_get_pulse("X-Axis", "X-Axis Motor")
-        )
-        self.btn_get_x_pulse.pack(side=tk.LEFT, padx=(0, 5))
-
-        # 获取Y轴脉冲数按钮
-        self.btn_get_y_pulse = ttk.Button(
-            button_frame,
-            text="Get Y-Axis Pulse",
-            command=lambda: self.on_get_pulse("Y-Axis", "Y-Axis Motor")
-        )
-        self.btn_get_y_pulse.pack(side=tk.LEFT)
-
-        # 右侧：脉冲数显示区域
-        display_frame = ttk.Frame(pulse_frame)
-        display_frame.pack(side=tk.LEFT, padx=(20, 0))
-
-        # X轴脉冲数显示
-        ttk.Label(display_frame, text="X-Axis Pulse:").pack(side=tk.LEFT, padx=(0, 5))
-        self.lbl_x_pulse = ttk.Label(display_frame, textvariable=self.x_pulse_var, font=("Cambria", 10, "bold"), foreground="blue")
-        self.lbl_x_pulse.pack(side=tk.LEFT, padx=(0, 20))
-
-        # Y轴脉冲数显示
-        ttk.Label(display_frame, text="Y-Axis Pulse:").pack(side=tk.LEFT, padx=(0, 5))
-        self.lbl_y_pulse = ttk.Label(display_frame, textvariable=self.y_pulse_var, font=("Cambria", 10, "bold"), foreground="blue")
-        self.lbl_y_pulse.pack(side=tk.LEFT)
-
-        style = ttk.Style()
-        style.configure("Dir.TButton", font=("Arial", 12, "bold"), width=8)
-
-        self.btn_up = ttk.Button(self.control_container, text="↑(Up)", style="Dir.TButton")
-        self.btn_left = ttk.Button(self.control_container, text="←(Left)", style="Dir.TButton")
-        self.btn_down = ttk.Button(self.control_container, text="↓(Down)", style="Dir.TButton")
-        self.btn_right = ttk.Button(self.control_container, text="→(Right)", style="Dir.TButton")
-
-        self.btn_up.grid(row=0, column=1, padx=5, pady=5)
-        self.btn_left.grid(row=1, column=0, padx=5, pady=5)
-        self.btn_down.grid(row=1, column=1, padx=5, pady=5)
-        self.btn_right.grid(row=1, column=2, padx=5, pady=5)
+        self.btn_up.grid(row=0, column=1, padx=8, pady=8)
+        self.btn_left.grid(row=1, column=0, padx=8, pady=8)
+        self.btn_down.grid(row=1, column=1, padx=8, pady=8)
+        self.btn_right.grid(row=1, column=2, padx=8, pady=8)
 
         self.buttons = {
             'Up': self.btn_up,
@@ -170,21 +82,68 @@ class MotionControlFrame(ttk.Frame):
             btn.bind('<ButtonPress-1>', lambda e, d=direction: self.on_press(d))
             btn.bind('<ButtonRelease-1>', lambda e, d=direction: self.on_release(d))
 
-        # --- 测试键绑定区域 (Test Key Binding Area) ---
-        self.binding_frame = ttk.LabelFrame(self, text="Test Key Binding", padding=10)
-        self.binding_frame.pack(anchor=tk.NW, padx=10, pady=10, fill=tk.BOTH, expand=True)
+        # --- 坐标系构建区域 (Coordinate System Area) ---
+        self.coord_frame = ttk.LabelFrame(top_frame, text="Coordinate System", padding=15)
+        self.coord_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # 新增绑定按钮
-        self.btn_add_binding = ttk.Button(
-            self.binding_frame,
-            text="Add Binding",
-            command=self.on_add_binding
-        )
-        self.btn_add_binding.pack(anchor=tk.W, pady=5)
+        # 1. 原点控制行
+        origin_row = ttk.Frame(self.coord_frame)
+        origin_row.pack(fill=tk.X, pady=(0, 15))
 
-        # 已绑定按键显示区域（使用Canvas和滚动条）
-        binding_container = ttk.Frame(self.binding_frame)
-        binding_container.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.btn_set_origin = ttk.Button(origin_row, text="Set Origin", style="Primary.TButton", command=self.on_set_origin)
+        self.btn_set_origin.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.btn_return_origin = ttk.Button(origin_row, text="Return to Origin", command=self.on_return_to_origin)
+        self.btn_return_origin.pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Separator(origin_row, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
+        ttk.Label(origin_row, text="Homing Speed (RPM):", font=("Cambria", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        self.homing_speed_var = tk.StringVar(value="100")
+        self.entry_homing_speed = ttk.Entry(origin_row, textvariable=self.homing_speed_var, width=8)
+        self.entry_homing_speed.pack(side=tk.LEFT, padx=(0, 5))
+        
+        ttk.Button(origin_row, text="Get", width=5, command=self.on_get_homing_speed).pack(side=tk.LEFT, padx=2)
+        ttk.Button(origin_row, text="Set", width=5, command=self.on_set_homing_speed).pack(side=tk.LEFT, padx=2)
+
+        # 2. 脉冲数显示行 (使用卡片式显示)
+        pulse_display_row = ttk.Frame(self.coord_frame)
+        pulse_display_row.pack(fill=tk.X, pady=5)
+
+        # X轴脉冲卡片
+        x_card = tk.Frame(pulse_display_row, bg="white", highlightthickness=1, highlightbackground="#edebe9")
+        x_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        ttk.Label(x_card, text="X-Axis Position", font=("Cambria", 9, "bold"), background="white", foreground="#605e5c").pack(pady=(5, 0))
+        self.lbl_x_pulse = ttk.Label(x_card, textvariable=self.x_pulse_var, font=("Cambria", 16, "bold"), background="white", foreground="#0078d4")
+        self.lbl_x_pulse.pack(pady=5)
+        ttk.Button(x_card, text="Refresh", command=lambda: self.on_get_pulse("X-Axis", "X-Axis Motor")).pack(pady=(0, 5))
+
+        # Y轴脉冲卡片
+        y_card = tk.Frame(pulse_display_row, bg="white", highlightthickness=1, highlightbackground="#edebe9")
+        y_card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        ttk.Label(y_card, text="Y-Axis Position", font=("Cambria", 9, "bold"), background="white", foreground="#605e5c").pack(pady=(5, 0))
+        self.lbl_y_pulse = ttk.Label(y_card, textvariable=self.y_pulse_var, font=("Cambria", 16, "bold"), background="white", foreground="#0078d4")
+        self.lbl_y_pulse.pack(pady=5)
+        ttk.Button(y_card, text="Refresh", command=lambda: self.on_get_pulse("Y-Axis", "Y-Axis Motor")).pack(pady=(0, 5))
+
+        # --- 底部：测试键绑定区域 (Test Key Binding Area) ---
+        self.binding_frame = ttk.LabelFrame(self, text="Key Bindings & Positions", padding=15)
+        self.binding_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # 工具栏
+        binding_toolbar = ttk.Frame(self.binding_frame)
+        binding_toolbar.pack(fill=tk.X, pady=(0, 10))
+
+        self.btn_add_binding = ttk.Button(binding_toolbar, text="+ Add New Binding", style="Primary.TButton", command=self.on_add_binding)
+        self.btn_add_binding.pack(side=tk.LEFT)
+
+        ttk.Label(binding_toolbar, text="Manage key positions for automated testing", font=("Cambria", 9), foreground="#605e5c").pack(side=tk.LEFT, padx=15)
+
+        # 已绑定按键显示区域
+        binding_container = ttk.Frame(self.binding_frame, style="Card.TFrame")
+        binding_container.pack(fill=tk.BOTH, expand=True)
 
         self.binding_canvas = tk.Canvas(binding_container, background="white", highlightthickness=0)
         self.binding_scrollbar = ttk.Scrollbar(binding_container, orient="vertical", command=self.binding_canvas.yview)
@@ -193,7 +152,7 @@ class MotionControlFrame(ttk.Frame):
         self.binding_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.binding_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.binding_inner_frame = ttk.Frame(self.binding_canvas)
+        self.binding_inner_frame = tk.Frame(self.binding_canvas, bg="white")
         self.binding_canvas_window = self.binding_canvas.create_window((0, 0), window=self.binding_inner_frame, anchor="nw")
 
         self.binding_inner_frame.bind("<Configure>", self._on_binding_frame_configure)

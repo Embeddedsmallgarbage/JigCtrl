@@ -4,6 +4,98 @@ import copy
 import serial
 import serial.tools.list_ports
 from config_manager import ConfigManager
+from key_manager import KeyManager
+
+# =========================================================================
+# 辅助类：测试项设置窗口 (TestItemSettingsWindow)
+# =========================================================================
+class TestItemSettingsWindow(tk.Toplevel):
+    """
+    TestItemSettingsWindow 类：新增测试项时的设置窗口。
+    """
+    def __init__(self, parent, callback):
+        super().__init__(parent)
+        self.title("Add Test Item")
+        self.geometry("420x350")
+        self.callback = callback
+        self.key_manager = KeyManager()
+        
+        # 设置窗口背景色
+        self.configure(bg="#f3f2f1")
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        main_frame = ttk.Frame(self, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 1. 测试类型 (Test Type)
+        ttk.Label(main_frame, text="Test Type:", font=("Cambria", 9, "bold")).grid(row=0, column=0, sticky=tk.W, pady=8)
+        self.type_var = tk.StringVar(value="single")
+        type_frame = ttk.Frame(main_frame)
+        type_frame.grid(row=0, column=1, sticky=tk.W, pady=8)
+        ttk.Radiobutton(type_frame, text="Single Key", variable=self.type_var, value="single").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(type_frame, text="Multi-Key", variable=self.type_var, value="multi").pack(side=tk.LEFT, padx=5)
+
+        # 2. 选择按键
+        ttk.Label(main_frame, text="Select Key:", font=("Cambria", 9, "bold")).grid(row=1, column=0, sticky=tk.W, pady=8)
+        self.key_var = tk.StringVar()
+        bindings = self.key_manager.get_bindings()
+        key_names = [b['key_name'] for b in bindings]
+        self.key_combo = ttk.Combobox(main_frame, textvariable=self.key_var, values=key_names, state="readonly")
+        self.key_combo.grid(row=1, column=1, sticky=tk.EW, pady=8)
+        if key_names:
+            self.key_combo.current(0)
+            
+        # 3. 测试模式
+        ttk.Label(main_frame, text="Test Mode:", font=("Cambria", 9, "bold")).grid(row=2, column=0, sticky=tk.W, pady=8)
+        self.mode_var = tk.StringVar(value="count")
+        mode_frame = ttk.Frame(main_frame)
+        mode_frame.grid(row=2, column=1, sticky=tk.W, pady=8)
+        ttk.Radiobutton(mode_frame, text="Count", variable=self.mode_var, value="count", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="Time", variable=self.mode_var, value="time", command=self.on_mode_change).pack(side=tk.LEFT, padx=5)
+        
+        # 4. 目标数值
+        ttk.Label(main_frame, text="Target Value:", font=("Cambria", 9, "bold")).grid(row=3, column=0, sticky=tk.W, pady=8)
+        self.target_var = tk.IntVar(value=100)
+        self.target_entry = ttk.Entry(main_frame, textvariable=self.target_var)
+        self.target_entry.grid(row=3, column=1, sticky=tk.EW, pady=8)
+        
+        # 5. 时间单位
+        self.unit_label = ttk.Label(main_frame, text="Unit:", font=("Cambria", 9, "bold"))
+        self.unit_var = tk.StringVar(value="Seconds")
+        self.unit_combo = ttk.Combobox(main_frame, textvariable=self.unit_var, values=["Seconds", "Minutes", "Hours"], state="readonly")
+        
+        # 6. 按钮
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=25)
+        ttk.Button(btn_frame, text="OK", style="Primary.TButton", width=12, command=self.on_ok).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Cancel", width=12, command=self.destroy).pack(side=tk.LEFT, padx=10)
+        
+        self.on_mode_change()
+        
+    def on_mode_change(self):
+        if self.mode_var.get() == "time":
+            self.unit_label.grid(row=4, column=0, sticky=tk.W, pady=5)
+            self.unit_combo.grid(row=4, column=1, sticky=tk.EW, pady=5)
+        else:
+            self.unit_label.grid_remove()
+            self.unit_combo.grid_remove()
+            
+    def on_ok(self):
+        key_name = self.key_var.get()
+        if not key_name:
+            return
+            
+        test_item = {
+            "type": self.type_var.get(),
+            "key_name": key_name,
+            "mode": self.mode_var.get(),
+            "target": self.target_var.get(),
+            "unit": self.unit_var.get() if self.mode_var.get() == "time" else ""
+        }
+        self.callback(test_item)
+        self.destroy()
 
 # =========================================================================
 # 辅助类：串口配置组件 (SerialConfigFrame)
@@ -11,7 +103,7 @@ from config_manager import ConfigManager
 class SerialConfigFrame(ttk.LabelFrame):
     """
     SerialConfigFrame 类：通用的串口配置子组件，继承自 ttk.LabelFrame。
-    包含端口选择、波特率、数据位、停止位、校验位配置及打开/关闭逻辑。
+    包含端口选择、波特率配置及打开/关闭逻辑。简化了数据位、停止位和校验位（默认为 8-N-1）。
     """
     def __init__(self, master, title, on_change_callback, port_manager, log_callback):
         """
@@ -22,12 +114,17 @@ class SerialConfigFrame(ttk.LabelFrame):
             port_manager: 端口管理器实例，用于检查端口冲突
             log_callback: 日志记录回调函数
         """
-        super().__init__(master, text=title, padding=10)
+        super().__init__(master, text=title, padding=15)
         self.on_change = on_change_callback
         self.port_manager = port_manager
         self.log = log_callback
         self.serial_conn = None # 存储实际的 serial.Serial 连接对象
         self.is_open = False    # 标记当前串口是否已打开
+        
+        # 内部变量（保持兼容性）
+        self.data_bits_var = tk.IntVar(value=8)
+        self.stop_bits_var = tk.DoubleVar(value=1)
+        self.parity_var = tk.StringVar(value='None')
         
         self.create_widgets()
 
@@ -39,46 +136,25 @@ class SerialConfigFrame(ttk.LabelFrame):
         self.columnconfigure(1, weight=1)
 
         # 1. 端口选择 (Port Selection)
-        ttk.Label(self, text="Port:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(self, text="Port:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.port_var = tk.StringVar()
         self.port_combo = ttk.Combobox(self, textvariable=self.port_var, state="readonly")
-        self.port_combo.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
+        self.port_combo.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=5)
         # 绑定选择事件
         self.port_combo.bind("<<ComboboxSelected>>", lambda e: self.on_change())
         # 绑定鼠标点击事件，实时刷新可用端口
         self.port_combo.bind('<Button-1>', self.refresh_ports) 
 
         # 2. 波特率 (Baud Rate)
-        ttk.Label(self, text="Baud:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(self, text="Baud:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.baud_var = tk.IntVar(value=9600)
         self.baud_combo = ttk.Combobox(self, textvariable=self.baud_var, values=[9600, 19200, 38400, 115200], state="readonly")
-        self.baud_combo.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
+        self.baud_combo.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
         self.baud_combo.bind("<<ComboboxSelected>>", lambda e: self.on_change())
 
-        # 3. 数据位 (Data Bits)
-        ttk.Label(self, text="Data Bits:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-        self.data_bits_var = tk.IntVar(value=8)
-        self.data_bits_combo = ttk.Combobox(self, textvariable=self.data_bits_var, values=[5, 6, 7, 8], state="readonly")
-        self.data_bits_combo.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=2)
-        self.data_bits_combo.bind("<<ComboboxSelected>>", lambda e: self.on_change())
-
-        # 4. 停止位 (Stop Bits)
-        ttk.Label(self, text="Stop Bits:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=2)
-        self.stop_bits_var = tk.DoubleVar(value=1)
-        self.stop_bits_combo = ttk.Combobox(self, textvariable=self.stop_bits_var, values=[1, 1.5, 2], state="readonly")
-        self.stop_bits_combo.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=2)
-        self.stop_bits_combo.bind("<<ComboboxSelected>>", lambda e: self.on_change())
-
-        # 5. 校验位 (Parity)
-        ttk.Label(self, text="Parity:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=2)
-        self.parity_var = tk.StringVar(value='None')
-        self.parity_combo = ttk.Combobox(self, textvariable=self.parity_var, values=['None', 'Even', 'Odd', 'Mark', 'Space'], state="readonly")
-        self.parity_combo.grid(row=4, column=1, sticky=tk.EW, padx=5, pady=2)
-        self.parity_combo.bind("<<ComboboxSelected>>", lambda e: self.on_change())
-
-        # 6. 打开/关闭端口按钮 (Open/Close Button)
-        self.btn_open = ttk.Button(self, text="Open Port", command=self.toggle_port)
-        self.btn_open.grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+        # 3. 打开/关闭端口按钮 (Open/Close Button)
+        self.btn_open = ttk.Button(self, text="Open Port", style="Primary.TButton", command=self.toggle_port)
+        self.btn_open.grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=5, pady=10)
         
         # 初始刷新一次端口
         self.refresh_ports()
@@ -110,7 +186,7 @@ class SerialConfigFrame(ttk.LabelFrame):
             # 释放端口管理器中的占用
             self.port_manager.release_port(self.port_var.get())
             self.is_open = False
-            self.btn_open.config(text="Open Port")
+            self.btn_open.config(text="Open Port", style="Primary.TButton")
             self.log(f"{self['text']} Port Closed", "SER")
             self.toggle_inputs(True) # 恢复输入框为可编辑
         else:
@@ -126,29 +202,20 @@ class SerialConfigFrame(ttk.LabelFrame):
                 return
 
             try:
-                # 校验位映射表
-                parity_map = {
-                    'None': serial.PARITY_NONE,
-                    'Even': serial.PARITY_EVEN,
-                    'Odd': serial.PARITY_ODD,
-                    'Mark': serial.PARITY_MARK,
-                    'Space': serial.PARITY_SPACE
-                }
-                
                 # 实例化串口对象并尝试打开
                 self.serial_conn = serial.Serial(
                     port=port,
                     baudrate=self.baud_var.get(),
-                    bytesize=self.data_bits_var.get(),
-                    stopbits=self.stop_bits_var.get(),
-                    parity=parity_map.get(self.parity_var.get(), serial.PARITY_NONE),
+                    bytesize=8,
+                    stopbits=1,
+                    parity=serial.PARITY_NONE,
                     timeout=0.1
                 )
                 
                 # 标记端口为占用状态
                 self.port_manager.claim_port(port)
                 self.is_open = True
-                self.btn_open.config(text="Close Port")
+                self.btn_open.config(text="Close Port", style="Danger.TButton")
                 self.log(f"{self['text']} Port {port} Opened successfully", "SER")
                 self.toggle_inputs(False) # 禁用配置输入框，防止运行时修改
             except Exception as e:
@@ -162,18 +229,15 @@ class SerialConfigFrame(ttk.LabelFrame):
         state = "readonly" if enable else "disabled"
         self.port_combo.config(state=state)
         self.baud_combo.config(state=state)
-        self.data_bits_combo.config(state=state)
-        self.stop_bits_combo.config(state=state)
-        self.parity_combo.config(state=state)
 
     def get_settings(self):
         """获取当前组件的配置字典"""
         return {
             'port': self.port_var.get(),
             'baud': self.baud_var.get(),
-            'data_bits': self.data_bits_var.get(),
-            'stop_bits': self.stop_bits_var.get(),
-            'parity': self.parity_var.get()
+            'data_bits': 8,
+            'stop_bits': 1,
+            'parity': 'None'
         }
 
     def get_serial_connection(self):
@@ -218,6 +282,8 @@ class SettingsFrame(ttk.Frame):
         self.port_manager = PortManager() # 初始化端口管理器
         self.vars = {} # 存储普通参数的变量字典
         self.config_manager = ConfigManager() # 初始化配置管理器
+        self.test_flow = [] # 存储测试流程项
+        self.test_control = None # 引用测试控制对象
         
         self.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
@@ -233,73 +299,205 @@ class SettingsFrame(ttk.Frame):
     def create_widgets(self):
         """
         创建设置页面的所有组件分区。
+        布局顺序调整为：1. 串口配置 2. 按压参数 3. 测试流程（最底部）
         """
-        # --- 1. 测试基本参数设置分区 (Test Parameters) ---
-        test_frame = ttk.LabelFrame(self, text="Test Parameters", padding=10)
-        test_frame.pack(fill=tk.X, pady=5)
-
-        # 测试模式：按次数或按时间
-        self.vars['test_mode'] = tk.StringVar(value="count")
-        ttk.Radiobutton(test_frame, text="By Count (Times)", variable=self.vars['test_mode'], value="count", command=self.on_mode_change).grid(row=0, column=0, padx=10, sticky=tk.W)
-        ttk.Radiobutton(test_frame, text="By Time (Duration)", variable=self.vars['test_mode'], value="time", command=self.on_mode_change).grid(row=0, column=1, padx=10, sticky=tk.W)
-
-        # 目标数值输入 (次数或时长)
-        ttk.Label(test_frame, text="Target Value:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.E)
-        self.vars['target_value'] = tk.IntVar(value=100)
-        entry_target = ttk.Entry(test_frame, textvariable=self.vars['target_value'])
-        entry_target.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        # 追踪变量变化，实时检查是否有未保存更改
-        self.vars['target_value'].trace_add("write", lambda *args: self.check_changes())
-
-        # 时间单位选择 (仅在“按时间”模式下显示)
-        self.vars['time_unit'] = tk.StringVar(value="Seconds")
-        self.unit_combo = ttk.Combobox(test_frame, textvariable=self.vars['time_unit'], values=["Seconds", "Minutes", "Hours"], state="readonly", width=10)
-        self.unit_combo.grid(row=1, column=2, padx=5, pady=5, sticky=tk.W)
-        self.unit_combo.bind("<<ComboboxSelected>>", lambda e: self.check_changes())
-        
-        # --- 2. 按压参数设置分区 (Press Settings) ---
-        press_frame = ttk.LabelFrame(self, text="Press Settings", padding=10)
-        press_frame.pack(fill=tk.X, pady=5)
-
-        # 按压持续时间
-        ttk.Label(press_frame, text="Press Duration (ms):").grid(row=0, column=0, padx=5, pady=5)
-        self.vars['press_duration'] = tk.IntVar(value=100)
-        ttk.Entry(press_frame, textvariable=self.vars['press_duration']).grid(row=0, column=1, padx=5, pady=5)
-        self.vars['press_duration'].trace_add("write", lambda *args: self.check_changes())
-
-        # 两次按压间隔
-        ttk.Label(press_frame, text="Interval (ms):").grid(row=0, column=2, padx=5, pady=5)
-        self.vars['press_interval'] = tk.IntVar(value=500)
-        ttk.Entry(press_frame, textvariable=self.vars['press_interval']).grid(row=0, column=3, padx=5, pady=5)
-        self.vars['press_interval'].trace_add("write", lambda *args: self.check_changes())
-
-        # --- 3. 串口配置分区 (Serial Settings) ---
+        # --- 1. 串口配置分区 (Serial Settings) ---
         serial_container = ttk.Frame(self)
-        serial_container.pack(fill=tk.BOTH, expand=True, pady=5)
+        serial_container.pack(fill=tk.X, pady=(0, 10))
 
         self.serial_frames = {}
-        # 循环创建三个串口配置块
         for idx, title in enumerate(["X-Axis Motor", "Y-Axis Motor", "Relay (Solenoid)"]):
-            frame = SerialConfigFrame(serial_container, title, self.check_changes, self.port_manager, self.log)
-            frame.grid(row=0, column=idx, padx=5, sticky=tk.NSEW)
+            # 使用包装框架以便更好控制 padding
+            wrapper = ttk.Frame(serial_container)
+            wrapper.grid(row=0, column=idx, padx=5, sticky=tk.NSEW)
             serial_container.columnconfigure(idx, weight=1)
+            
+            frame = SerialConfigFrame(wrapper, title, self.check_changes, self.port_manager, self.log)
+            frame.pack(fill=tk.BOTH, expand=True)
             self.serial_frames[title] = frame
 
-        # --- 4. 应用按钮 (底部) ---
-        self.btn_apply = ttk.Button(self, text="Apply Changes", command=self.apply_changes, state=tk.DISABLED)
-        self.btn_apply.pack(side=tk.BOTTOM, pady=10, anchor=tk.E)
+        # --- 2. 按压参数设置分区 (Press Settings) ---
+        press_card = tk.Frame(self, bg="white", highlightthickness=1, highlightbackground="#edebe9")
+        press_card.pack(fill=tk.X, pady=10)
+        
+        # 标题栏
+        press_title_bar = tk.Frame(press_card, bg="#f8f9fa")
+        press_title_bar.pack(fill=tk.X)
+        tk.Label(press_title_bar, text="Press Settings", font=("Cambria", 10, "bold"), bg="#f8f9fa", fg="#323130").pack(side=tk.LEFT, padx=15, pady=8)
 
-        # 根据初始模式调整 UI 显示
-        self.on_mode_change()
+        # 输入区域
+        press_inner = tk.Frame(press_card, bg="white", padx=20, pady=15)
+        press_inner.pack(fill=tk.X)
+
+        # Press Duration
+        tk.Label(press_inner, text="Press Duration (ms):", font=("Cambria", 9), bg="white", fg="#605e5c").grid(row=0, column=0, padx=(0, 10), pady=5, sticky=tk.W)
+        self.vars['press_duration'] = tk.IntVar(value=100)
+        ttk.Entry(press_inner, textvariable=self.vars['press_duration'], width=15).grid(row=0, column=1, padx=(0, 20), pady=5)
+        self.vars['press_duration'].trace_add("write", lambda *args: self.check_changes())
+
+        # Interval
+        tk.Label(press_inner, text="Interval (ms):", font=("Cambria", 9), bg="white", fg="#605e5c").grid(row=0, column=2, padx=(0, 10), pady=5, sticky=tk.W)
+        self.vars['press_interval'] = tk.IntVar(value=500)
+        ttk.Entry(press_inner, textvariable=self.vars['press_interval'], width=15).grid(row=0, column=3, padx=(0, 20), pady=5)
+        self.vars['press_interval'].trace_add("write", lambda *args: self.check_changes())
+
+        # --- 3. 测试流程设置分区 (Test Flow) ---
+        flow_card = tk.Frame(self, bg="white", highlightthickness=1, highlightbackground="#edebe9")
+        flow_card.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        # 标题栏
+        flow_title_bar = tk.Frame(flow_card, bg="#f8f9fa")
+        flow_title_bar.pack(fill=tk.X)
+        tk.Label(flow_title_bar, text="Test Flow", font=("Cambria", 10, "bold"), bg="#f8f9fa", fg="#323130").pack(side=tk.LEFT, padx=15, pady=8)
+
+        # 控制栏
+        ctrl_frame = tk.Frame(flow_card, bg="white", padx=15, pady=10)
+        ctrl_frame.pack(fill=tk.X)
+
+        self.btn_add = ttk.Button(ctrl_frame, text="+ Add Test Item", style="Primary.TButton", command=self.open_add_test_item_window)
+        self.btn_add.pack(side=tk.LEFT, padx=5)
+
+        self.btn_clear = ttk.Button(ctrl_frame, text="Clear All", style="Danger.TButton", command=self.clear_test_flow)
+        self.btn_clear.pack(side=tk.LEFT, padx=5)
+
+        self.btn_next = ttk.Button(ctrl_frame, text="Next Item >>", command=self.skip_to_next_item, state=tk.DISABLED)
+        self.btn_next.pack(side=tk.RIGHT, padx=5)
+
+        # 测试项显示区域
+        self.flow_canvas = tk.Canvas(flow_card, height=180, highlightthickness=0, bg="white")
+        self.flow_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5)
+        
+        scrollbar = ttk.Scrollbar(flow_card, orient=tk.HORIZONTAL, command=self.flow_canvas.xview)
+        scrollbar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
+        self.flow_canvas.configure(xscrollcommand=scrollbar.set)
+
+        self.flow_container = tk.Frame(self.flow_canvas, bg="white")
+        self.flow_canvas.create_window((0, 0), window=self.flow_container, anchor=tk.NW)
+        
+        self.flow_container.bind("<Configure>", lambda e: self.flow_canvas.configure(scrollregion=self.flow_canvas.bbox("all")))
+
+        # --- 4. 应用按钮 (底部) ---
+        self.btn_apply = ttk.Button(self, text="Apply Changes", style="Primary.TButton", command=self.apply_changes, state=tk.DISABLED)
+        self.btn_apply.pack(side=tk.BOTTOM, pady=(10, 0), anchor=tk.E)
+
+    def open_add_test_item_window(self):
+        """打开新增测试项窗口"""
+        TestItemSettingsWindow(self, self.add_test_item)
+
+    def add_test_item(self, item):
+        """回调函数：添加测试项到流程"""
+        self.test_flow.append(item)
+        self.render_test_flow()
+        self.check_changes()
+
+    def delete_test_item(self, index):
+        """删除指定的测试项"""
+        if 0 <= index < len(self.test_flow):
+            self.test_flow.pop(index)
+            self.render_test_flow()
+            self.check_changes()
+
+    def render_test_flow(self):
+        """渲染测试流程区域的所有测试项"""
+        is_testing = False
+        current_idx = -1
+        if self.test_control:
+            is_testing = self.test_control.is_running
+            current_idx = self.test_control.current_item_index
+
+        self.btn_clear.config(state=tk.DISABLED if is_testing else tk.NORMAL)
+        self.btn_next.config(state=tk.NORMAL if is_testing else tk.DISABLED)
+
+        for widget in self.flow_container.winfo_children():
+            widget.destroy()
+
+        for i, item in enumerate(self.test_flow):
+            if i > 0:
+                arrow_label = tk.Label(self.flow_container, text="➜", font=("Cambria", 18), fg="#0078d4", bg="white")
+                arrow_label.pack(side=tk.LEFT, padx=5)
+
+            # 样式定义
+            status_text = ""
+            status_color = "white"
+            border_color = "#edebe9"
+            header_bg = "#f8f9fa"
+            text_color = "#323130"
+            
+            if is_testing:
+                if i < current_idx:
+                    status_text = "Completed"
+                    header_bg = "#e1dfdd"
+                    text_color = "#605e5c"
+                elif i == current_idx:
+                    status_text = "Running..."
+                    header_bg = "#dff6dd" # 浅绿
+                    border_color = "#107c10"
+                    text_color = "#107c10"
+                    status_color = "#f3fdf3"
+                else:
+                    status_text = "Pending"
+            
+            # 创建卡片容器
+            card = tk.Frame(self.flow_container, bg=status_color, highlightthickness=1, highlightbackground=border_color)
+            card.pack(side=tk.LEFT, padx=10, pady=20, ipadx=10, ipady=10)
+            
+            # 卡片标题栏
+            header = tk.Frame(card, bg=header_bg)
+            header.pack(fill=tk.X)
+            
+            tk.Label(header, text=f"Step {i+1}", font=("Cambria", 9, "bold"), bg=header_bg, fg=text_color).pack(side=tk.LEFT, padx=8, pady=4)
+            if status_text:
+                tk.Label(header, text=status_text, font=("Cambria", 8, "italic"), bg=header_bg, fg=text_color).pack(side=tk.RIGHT, padx=8)
+
+            # 内容区域
+            content = tk.Frame(card, bg=status_color)
+            content.pack(fill=tk.BOTH, expand=True, pady=10)
+
+            tk.Label(content, text=item['key_name'], font=("Cambria", 12, "bold"), bg=status_color, fg=text_color).pack(pady=(5, 2))
+            
+            val_text = f"{item['target']} {item['unit'] if item['mode'] == 'time' else 'Times'}"
+            tk.Label(content, text=val_text, font=("Cambria", 10), bg=status_color, fg="#605e5c").pack()
+            
+            type_text = "Single Key" if item.get('type') == 'single' else "Multi-Key"
+            tk.Label(content, text=type_text, font=("Cambria", 8), bg=status_color, fg="#a19f9d").pack(pady=5)
+
+            # 右键菜单 (仅在非测试时或特定条件下允许删除)
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label="Delete Item", command=lambda idx=i: self.delete_test_item(idx))
+            
+            def show_menu(event, m=menu, idx=i):
+                if is_testing and idx <= current_idx:
+                    return
+                m.post(event.x_root, event.y_root)
+            
+            card.bind("<Button-3>", show_menu)
+            for child in card.winfo_children():
+                child.bind("<Button-3>", show_menu)
+                for grand_child in child.winfo_children():
+                    grand_child.bind("<Button-3>", show_menu)
+
+    def clear_test_flow(self):
+        """清空所有测试项"""
+        if self.test_control and self.test_control.is_running:
+            return
+        self.test_flow = []
+        self.render_test_flow()
+        self.check_changes()
+
+    def skip_to_next_item(self):
+        """跳过当前测试项"""
+        if self.test_control:
+            self.test_control.skip_to_next()
+
+    def show_context_menu(self, event, index):
+        """显示右键删除菜单"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Delete", command=lambda: self.delete_test_item(index))
+        menu.post(event.x_root, event.y_root)
 
     def on_mode_change(self):
-        """测试模式切换时的 UI 响应"""
-        mode = self.vars['test_mode'].get()
-        if mode == 'time':
-            self.unit_combo.grid() # 显示单位选择
-        else:
-            self.unit_combo.grid_remove() # 隐藏单位选择
-        self.check_changes()
+        """测试模式切换时的 UI 响应 (已废弃，保留空函数以防其他地方调用)"""
+        pass
 
     def get_current_state(self):
         """
@@ -312,9 +510,7 @@ class SettingsFrame(ttk.Frame):
                 state[key] = var.get()
             except:
                 # 如果变量为空或转换失败，使用默认值
-                if key == 'target_value':
-                    state[key] = 100
-                elif key == 'press_duration':
+                if key == 'press_duration':
                     state[key] = 100
                 elif key == 'press_interval':
                     state[key] = 500
@@ -324,6 +520,9 @@ class SettingsFrame(ttk.Frame):
         # 合并三个串口组件的配置
         for title, frame in self.serial_frames.items():
             state[title] = frame.get_settings()
+            
+        # 添加测试流程配置
+        state['test_flow'] = copy.deepcopy(self.test_flow)
         return state
 
     def save_initial_state(self):
@@ -361,21 +560,11 @@ class SettingsFrame(ttk.Frame):
     def validate_and_fix_inputs(self):
         """
         验证输入的有效性，如果输入无效则恢复为上一次保存的值。
-        检查的字段包括：target_value, press_duration, press_interval
+        检查的字段包括：press_duration, press_interval
         """
         # 获取上一次保存的值（如果有）
-        last_target_value = self.saved_state.get('target_value', 100) if hasattr(self, 'saved_state') else 100
         last_press_duration = self.saved_state.get('press_duration', 100) if hasattr(self, 'saved_state') else 100
         last_press_interval = self.saved_state.get('press_interval', 500) if hasattr(self, 'saved_state') else 500
-        
-        # 验证并修复 target_value
-        try:
-            target_value = self.vars['target_value'].get()
-            if target_value is None or target_value <= 0:
-                raise ValueError("Invalid target value")
-        except:
-            self.vars['target_value'].set(last_target_value)
-            self.log(f"Invalid target value, restored to {last_target_value}", "SET")
         
         # 验证并修复 press_duration
         try:
@@ -429,21 +618,17 @@ class SettingsFrame(ttk.Frame):
         
         try:
             # 加载普通参数，使用默认值防止空值
-            if 'test_mode' in config and config['test_mode']:
-                self.vars['test_mode'].set(config['test_mode'])
-            
-            if 'target_value' in config and config['target_value'] is not None:
-                self.vars['target_value'].set(config['target_value'])
-            
-            if 'time_unit' in config and config['time_unit']:
-                self.vars['time_unit'].set(config['time_unit'])
-            
             if 'press_duration' in config and config['press_duration'] is not None:
                 self.vars['press_duration'].set(config['press_duration'])
             
             if 'press_interval' in config and config['press_interval'] is not None:
                 self.vars['press_interval'].set(config['press_interval'])
             
+            # 加载测试流程
+            if 'test_flow' in config:
+                self.test_flow = config['test_flow']
+                self.render_test_flow()
+
             # 加载串口配置
             for title, frame in self.serial_frames.items():
                 if title in config:
@@ -462,7 +647,7 @@ class SettingsFrame(ttk.Frame):
             self.log(f"Configuration loaded from {self.config_manager.get_config_file_path()}", "SET")
             
             # 更新UI显示
-            self.on_mode_change()
+            # self.on_mode_change()
             
         except Exception as e:
             self.log(f"Error loading configuration: {e}", "ERR")

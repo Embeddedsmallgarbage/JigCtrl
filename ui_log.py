@@ -34,89 +34,74 @@ class LogFrame(ttk.Frame):
         """
         # --- 工具栏 (Toolbar) ---
         self.toolbar = ttk.Frame(self)
-        self.toolbar.pack(fill=tk.X, pady=(0, 5))
+        self.toolbar.pack(fill=tk.X, pady=(0, 10))
 
-        # 1. 筛选按钮 (Filter Button) - 浅蓝色背景
-        self.btn_filter = tk.Button(
-            self.toolbar,
-            text="Filter",
-            command=self.open_filter_window,
-            bg="#ADD8E6", # 浅蓝色
-            fg="white",
-            font=("Cambria", 10, "bold"),
-            relief=tk.FLAT,
-            padx=15
-        )
+        # 1. 筛选按钮
+        self.btn_filter = ttk.Button(self.toolbar, text="🔍 Filter", command=self.open_filter_window)
         self.btn_filter.pack(side=tk.LEFT, padx=5)
 
-        # 2. 恢复按钮 (Recover Button) - 初始隐藏，仅在筛选后显示
-        self.btn_recover = tk.Button(
-            self.toolbar,
-            text="Recover",
-            command=self.recover_logs,
-            bg="#90EE90", # 浅绿色
-            fg="white",
-            font=("Cambria", 10, "bold"),
-            relief=tk.FLAT,
-            padx=15
-        )
-        # 注意：此处不 pack，由筛选逻辑控制显示
+        # 2. 恢复按钮
+        self.btn_recover = ttk.Button(self.toolbar, text="↺ Show All", command=self.recover_logs)
 
-        # 3. 导出日志按钮 (Export Log) - 靠右显示
-        self.btn_export = tk.Button(
-            self.toolbar, 
-            text="Export Log", 
-            command=self.export_log,
-            bg="black",
-            fg="white",
-            font=("Cambria", 10),
-            relief=tk.FLAT,
-            padx=10
-        )
+        # 3. 导出日志按钮
+        self.btn_export = ttk.Button(self.toolbar, text="💾 Export Log", command=self.export_log)
         self.btn_export.pack(side=tk.RIGHT, padx=5)
 
-        # 4. 清空日志按钮 (Clear Log) - 红色背景，靠右显示
-        self.btn_clear = tk.Button(
-            self.toolbar, 
-            text="Clear Log", 
-            command=self.clear_log_with_confirm,
-            bg="red",
-            fg="white",
-            font=("Cambria", 10),
-            relief=tk.FLAT,
-            padx=10
-        )
+        # 4. 清空日志按钮
+        self.btn_clear = ttk.Button(self.toolbar, text="🗑️ Clear Log", style="Danger.TButton", command=self.clear_log_with_confirm)
         self.btn_clear.pack(side=tk.RIGHT, padx=5)
 
         # --- 日志显示区域 (Log Area) ---
-        # 使用 ScrolledText 支持滚动，初始状态为禁用以防止用户手动修改
-        self.log_area = scrolledtext.ScrolledText(self, state='disabled', height=20, font=("Cambria", 10))
-        self.log_area.pack(fill=tk.BOTH, expand=True)
+        log_container = ttk.Frame(self, style="Card.TFrame")
+        log_container.pack(fill=tk.BOTH, expand=True)
 
-    # =========================================================================
-    # 日志操作分区 (Log Operations)
-    # =========================================================================
+        self.log_area = scrolledtext.ScrolledText(
+            log_container, 
+            state='disabled', 
+            height=20, 
+            font=("Cambria", 10),
+            bg="#2b2b2b", # 深色背景
+            fg="#d1d1d1", # 浅灰色文字
+            highlightthickness=0,
+            borderwidth=0
+        )
+        self.log_area.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+
+        # 配置日志颜色标签
+        self.log_area.tag_configure("SYS", foreground="#3498db")    # 蓝色
+        self.log_area.tag_configure("MOT", foreground="#9b59b6")    # 紫色
+        self.log_area.tag_configure("SET", foreground="#f1c40f")    # 黄色
+        self.log_area.tag_configure("SER", foreground="#1abc9c")    # 青色
+        self.log_area.tag_configure("TEST", foreground="#2ecc71")   # 绿色
+        self.log_area.tag_configure("REL", foreground="#e67e22")    # 橙色
+        self.log_area.tag_configure("ERR", foreground="#e74c3c", font=("Cambria", 10, "bold")) # 红色
+        self.log_area.tag_configure("COM", foreground="#7f8c8d")    # 灰色 (通讯日志)
+        self.log_area.tag_configure("TIMESTAMP", foreground="#586e75") # 时间戳颜色
+
     def add_log(self, message, category="SYS"):
         """
         向系统添加一条新日志。
-        参数:
-            message: 日志消息内容
-            category: 日志分类，默认为 "SYS"
         """
         now = datetime.datetime.now()
-        # 格式化时间戳，精确到毫秒
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S") + f".{now.microsecond // 1000:03d}"
-        # 构建完整的日志显示行
-        entry = f"[{timestamp_str}] [{category}] {message}\n"
+        timestamp_str = now.strftime("%H:%M:%S") + f".{now.microsecond // 1000:03d}"
         
-        # 将日志数据存储在内存列表中，用于后续筛选
-        self.all_logs.append((now, category, message, entry))
+        entry_time = f"[{timestamp_str}] "
+        entry_cat = f"[{category}] "
+        entry_msg = f"{message}\n"
         
-        # 如果当前未处于筛选状态，则直接更新到显示区域
+        # 将日志数据存储在内存列表中
+        self.all_logs.append((now, category, message, f"{entry_time}{entry_cat}{entry_msg}"))
+        
         if not self.is_filtered:
             self.log_area.config(state='normal')
-            self.log_area.insert(tk.END, entry)
-            self.log_area.see(tk.END) # 自动滚动到底部
+            
+            # 分段插入以应用不同颜色
+            start_idx = self.log_area.index(tk.END + "-1c")
+            self.log_area.insert(tk.END, entry_time, "TIMESTAMP")
+            self.log_area.insert(tk.END, entry_cat, category)
+            self.log_area.insert(tk.END, entry_msg)
+            
+            self.log_area.see(tk.END)
             self.log_area.config(state='disabled')
 
     def add_mock_logs(self):

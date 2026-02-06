@@ -16,7 +16,7 @@ class JigCtrlApp(tk.Tk):
         # 设置窗口标题
         self.title("JigCtrl - Remote Control Jig System")
         # 设置窗口初始大小
-        self.geometry("1000x600")
+        self.geometry("1280x720")
         
         # --- 1. 样式配置 ---
         self.configure_styles()
@@ -30,42 +30,77 @@ class JigCtrlApp(tk.Tk):
     def configure_styles(self):
         """
         配置应用程序的全局 ttk 样式。
-        设置统一的字体、背景颜色以及各个组件的具体样式。
+        设计一套现代化的 UI 配色方案。
         """
         style = ttk.Style(self)
         try:
-            # 尝试使用 'clam' 主题以获得更好的跨平台一致性
             style.theme_use('clam') 
         except:
             pass
         
-        # 全局字体和背景颜色设置
-        default_font = ("Cambria", 10)
-        style.configure(".", font=default_font, background="white")
-        
-        # --- 特定组件样式配置 ---
-        # 框架背景颜色
-        style.configure("TFrame", background="white")
-        # 标签框架样式
-        style.configure("TLabelframe", background="white")
-        style.configure("TLabelframe.Label", background="white", font=("Cambria", 10, "bold"))
-        # 标签样式
-        style.configure("TLabel", background="white", font=("Cambria", 10))
-        # 按钮样式
-        style.configure("TButton", font=("Cambria", 10), background="white")
-        # 方向控制按钮样式 (加粗字体)
-        style.configure("Dir.TButton", font=("Cambria", 12, "bold"), background="white")
-        
-        # 输入框和下拉框的背景色配置
-        style.configure("TEntry", fieldbackground="white")
-        style.configure("TCombobox", fieldbackground="white", background="white")
-        
-        # 选项卡 (Notebook) 样式配置
-        style.configure("TNotebook", background="white")
-        style.configure("TNotebook.Tab", font=("Cambria", 10))
+        # --- 颜色定义 ---
+        COLORS = {
+            'bg': "#f0f2f5",          # 浅灰蓝背景
+            'card': "#ffffff",        # 白色卡片
+            'primary': "#0078d4",     # 微软蓝
+            'primary_hover': "#005a9e",
+            'success': "#107c10",     # 办公绿
+            'danger': "#d13438",      # 警告红
+            'text': "#323130",        # 深灰文字
+            'secondary_text': "#605e5c", # 次要文字
+            'border': "#edebe9"       # 边框色
+        }
 
-        # 确保根窗口背景也是白色
-        self.configure(background="white")
+        # 全局字体
+        default_font = ("Cambria", 10)
+        header_font = ("Cambria", 11, "bold")
+        
+        # 1. 基础配置
+        style.configure(".", font=default_font, background=COLORS['bg'], foreground=COLORS['text'])
+        
+        # 2. 框架样式
+        style.configure("TFrame", background=COLORS['bg'])
+        style.configure("Card.TFrame", background=COLORS['card'])
+        
+        # 3. 标签框架样式 (LabelFrame)
+        style.configure("TLabelframe", background=COLORS['bg'], bordercolor=COLORS['border'], relief="flat")
+        style.configure("TLabelframe.Label", background=COLORS['bg'], foreground=COLORS['primary'], font=header_font)
+        
+        # 4. 标签样式
+        style.configure("TLabel", background=COLORS['bg'], foreground=COLORS['text'])
+        style.configure("Header.TLabel", font=header_font, foreground=COLORS['primary'])
+        style.configure("Secondary.TLabel", foreground=COLORS['secondary_text'], font=("Cambria", 9))
+        
+        # 5. 按钮样式 (使用不同颜色区分)
+        # 默认按钮
+        style.configure("TButton", font=default_font, padding=(10, 5))
+        
+        # 强调按钮 (Primary)
+        style.configure("Primary.TButton", font=default_font, foreground="white", background=COLORS['primary'])
+        style.map("Primary.TButton", background=[('active', COLORS['primary_hover'])])
+        
+        # 成功按钮 (Success)
+        style.configure("Success.TButton", font=default_font, foreground="white", background=COLORS['success'])
+        
+        # 危险按钮 (Danger)
+        style.configure("Danger.TButton", font=default_font, foreground="white", background=COLORS['danger'])
+        
+        # 方向控制按钮
+        style.configure("Dir.TButton", font=("Cambria", 12, "bold"), padding=10)
+        
+        # 6. 输入框和下拉框
+        style.configure("TEntry", fieldbackground="white", bordercolor=COLORS['border'], lightcolor=COLORS['border'])
+        style.configure("TCombobox", fieldbackground="white", background="white", arrowcolor=COLORS['primary'])
+        
+        # 7. 选项卡 (Notebook) 样式
+        style.configure("TNotebook", background=COLORS['bg'], borderwidth=0)
+        style.configure("TNotebook.Tab", font=default_font, padding=(15, 5), background=COLORS['border'])
+        style.map("TNotebook.Tab", 
+                  background=[("selected", COLORS['bg']), ("active", "#e1dfdd")],
+                  foreground=[("selected", COLORS['primary'])])
+
+        # 确保根窗口背景
+        self.configure(background=COLORS['bg'])
 
     def create_widgets(self):
         """
@@ -89,6 +124,9 @@ class JigCtrlApp(tk.Tk):
         
         # 4. 测试控制页签 (传入设置页签引用，以便读取配置信息)
         self.tab_test = TestControlFrame(self.notebook, settings_source=self.tab_settings, log_callback=self.tab_log.add_log)
+
+        # 相互引用
+        self.tab_settings.test_control = self.tab_test
 
         # 5. 电机命令调试页签
         self.tab_motor_debug = MotorDebugFrame(self.notebook, log_callback=self.tab_log.add_log)
